@@ -6,11 +6,12 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 2: app state and pause/resume core. The
-Tauri desktop shell exists and exposes persisted pause/resume state, settings,
-history logging, UI banner state, and native menu pause/resume hooks. Hardware
-probing, providers, model routing, installers, remote broker behavior, and
-model/update automation are intentionally deferred to later approved stages.
+This repository is currently at Stage 3: hardware detection and specs export.
+The Tauri desktop shell exists, exposes persisted pause/resume state, and now
+includes native hardware probing, fixture-driven hardware profiles, the Machine
+Specs page, and JSON/CSV/Markdown export and clipboard copy controls.
+Providers, model routing, installers, remote broker behavior, and model/update
+automation are intentionally deferred to later approved stages.
 
 ## Stage Gate Rule
 
@@ -48,6 +49,9 @@ start the next implementation stage until the user explicitly approves it.
 - Stage 2 pause/resume core: Rust `app_state` module, persisted pause settings,
   pause history logs, Tauri commands, native menu hooks, paused banner, and
   Dashboard/Router/Settings/Logs UI wiring.
+- Stage 3 hardware detection: Rust `hardware_probe` module, macOS/Windows probe
+  paths, required hardware fixtures, Machine Specs live/fixture UI, and
+  JSON/CSV/Markdown export plus copy-to-clipboard controls.
 
 ## Planned Stack
 
@@ -97,10 +101,10 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 2 note: pause/resume state is real and persisted. Provider, router,
-installer, updater, notification, and remote broker workers do not exist yet,
-so their paused behavior is represented by the app-state gate and suspended
-task summary until those modules are implemented in later stages.
+Stage 3 note: hardware specs can be loaded from the live native probe or from
+fixtures. Live load percentages remain conservative placeholders until
+background telemetry is added in Stage 9. Provider, router, installer, updater,
+notification, and remote broker workers do not exist yet.
 
 ## Visual Baseline
 
@@ -121,7 +125,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 0 - Project Definition and Architecture
 - [x] Stage 1 - App Shell and Navigation
 - [x] Stage 2 - App State and Pause/Resume Core
-- [ ] Stage 3 - Hardware Detection and Specs Export
+- [x] Stage 3 - Hardware Detection and Specs Export
 - [ ] Stage 4 - Model Catalog and Compatibility Scoring
 - [ ] Stage 5 - Provider Adapter Layer With Mocked Providers
 - [ ] Stage 6 - Real Local Provider Adapters
@@ -174,7 +178,7 @@ marked as a stub.
 - Test pause/resume transitions and persistence.
 - Stop and ask for approval.
 
-### Stage 3 - Hardware Detection and Specs Export
+### [x] Stage 3 - Hardware Detection and Specs Export
 
 - Implement `hardware_probe`.
 - Detect macOS Apple Silicon, macOS Intel, and Windows x64 specs.

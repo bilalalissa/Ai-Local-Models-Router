@@ -1,8 +1,13 @@
 mod app_state;
+mod hardware_probe;
 
 use app_state::{
     state_file_path, AppStateSnapshot, AppStateStore, PauseHistoryEntry, PauseRequest,
     PauseSettings, PauseSource,
+};
+use hardware_probe::{
+    export_specs, list_fixtures, load_fixture, probe_live_specs, HardwareExportFormat,
+    HardwareFixtureSummary, HardwareSpecs,
 };
 use std::sync::Mutex;
 use tauri::{
@@ -72,6 +77,29 @@ fn get_pause_history(
     Ok(store.history())
 }
 
+#[tauri::command]
+fn refresh_hardware_specs() -> Result<HardwareSpecs, String> {
+    probe_live_specs()
+}
+
+#[tauri::command]
+fn list_hardware_fixtures() -> Result<Vec<HardwareFixtureSummary>, String> {
+    list_fixtures()
+}
+
+#[tauri::command]
+fn load_hardware_fixture(id: String) -> Result<HardwareSpecs, String> {
+    load_fixture(&id)
+}
+
+#[tauri::command]
+fn export_hardware_specs(
+    specs: HardwareSpecs,
+    format: HardwareExportFormat,
+) -> Result<String, String> {
+    export_specs(&specs, format)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -90,7 +118,11 @@ pub fn run() {
             pause_app,
             resume_app,
             update_pause_settings,
-            get_pause_history
+            get_pause_history,
+            refresh_hardware_specs,
+            list_hardware_fixtures,
+            load_hardware_fixture,
+            export_hardware_specs
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local AI Router desktop shell");

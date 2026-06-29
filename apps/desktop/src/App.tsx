@@ -3,10 +3,12 @@ import {
   Activity,
   Bell,
   Bot,
+  Clipboard,
   Cloud,
   Cpu,
   Download,
   FileBarChart,
+  FileJson,
   FileText,
   Home,
   Laptop,
@@ -21,7 +23,8 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-  TerminalSquare
+  TerminalSquare,
+  RefreshCw
 } from "lucide-react";
 import {
   type AppStateSnapshot,
@@ -34,6 +37,16 @@ import {
   subscribeAppState,
   updatePauseSettings
 } from "./appState";
+import {
+  type HardwareExportFormat,
+  type HardwareFixtureSummary,
+  type HardwareSpecs,
+  exportHardwareSpecs,
+  formatBytesGb,
+  listHardwareFixtures,
+  loadHardwareFixture,
+  refreshHardwareSpecs
+} from "./hardware";
 
 type PageId =
   | "dashboard"
@@ -79,14 +92,10 @@ const navItems: NavItem[] = [
   { id: "logs", label: "Logs", icon: FileText }
 ];
 
-const pageContent: Record<Exclude<PageId, "dashboard" | "router" | "settings" | "logs">, EmptyPage> = {
-  "machine-specs": {
-    title: "Machine Specs",
-    eyebrow: "Stage 1 page shell",
-    summary:
-      "Hardware probing, raw specs JSON, export controls, and copy actions land in Stage 3.",
-    readiness: ["Readable spec groups", "Raw JSON area", "Export action row"]
-  },
+const pageContent: Record<
+  Exclude<PageId, "dashboard" | "machine-specs" | "router" | "settings" | "logs">,
+  EmptyPage
+> = {
   "model-fit-map": {
     title: "Model Fit Map",
     eyebrow: "Stage 1 page shell",
@@ -253,6 +262,8 @@ export default function App() {
           ) : null}
           {activePage === "dashboard" ? (
             <Dashboard appState={appState} onPause={handlePause} onResume={handleResume} />
+          ) : activePage === "machine-specs" ? (
+            <MachineSpecsPage />
           ) : activePage === "router" ? (
             <RouterShell appState={appState} onPause={handlePause} onResume={handleResume} />
           ) : activePage === "settings" ? (
@@ -316,7 +327,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-        <span>Stage 2 app state</span>
+          <span>Stage 3 hardware</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -414,7 +425,10 @@ function Dashboard({
           <LoadMeter label="Memory" value={68} detail="12.2 / 18 GB" warn />
           <LoadMeter label="VRAM" value={52} detail="Unified" />
         </div>
-        <p className="fine-print">Static Stage 2 sample values; real detection begins in Stage 3.</p>
+        <p className="fine-print">
+          Dashboard values remain sample data until model scoring arrives; real specs are on
+          Machine Specs.
+        </p>
       </Panel>
 
       <Panel title="Active Provider" className="provider-panel">
@@ -515,6 +529,323 @@ function Dashboard({
             Resume now
           </button>
         </div>
+      </Panel>
+    </div>
+  );
+}
+
+function MachineSpecsPage() {
+  const [specs, setSpecs] = useState<HardwareSpecs | null>(null);
+  const [fixtures, setFixtures] = useState<HardwareFixtureSummary[]>([]);
+  const [selectedSource, setSelectedSource] = useState("__live");
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState("Loading live hardware probe...");
+  const [error, setError] = useState<string | null>(null);
+
+  const rawJson = useMemo(() => (specs ? JSON.stringify(specs, null, 2) : ""), [specs]);
+  const primaryGpu = specs?.gpus[0];
+  const primaryStorage = specs?.storage[0];
+
+  const loadLiveSpecs = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setStatus("Refreshing live hardware probe...");
+    try {
+      const nextSpecs = await refreshHardwareSpecs();
+      setSpecs(nextSpecs);
+      setSelectedSource("__live");
+      setStatus("Live hardware probe loaded.");
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatus("Live hardware probe failed.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    setLoading(true);
+    Promise.all([refreshHardwareSpecs(), listHardwareFixtures()])
+      .then(([nextSpecs, nextFixtures]) => {
+        if (ignore) return;
+        setSpecs(nextSpecs);
+        setFixtures(nextFixtures);
+        setStatus("Live hardware probe loaded.");
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatus("Hardware probe failed. Fixture mode is still available.");
+        listHardwareFixtures()
+          .then((nextFixtures) => {
+            if (!ignore) setFixtures(nextFixtures);
+          })
+          .catch(() => undefined);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  const handleSourceChange = useCallback(
+    async (sourceId: string) => {
+      setSelectedSource(sourceId);
+      setLoading(true);
+      setError(null);
+      try {
+        if (sourceId === "__live") {
+          await loadLiveSpecs();
+          return;
+        }
+        const fixture = await loadHardwareFixture(sourceId);
+        setSpecs(fixture);
+        setStatus(`Fixture loaded: ${fixture.name}.`);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatus("Could not load hardware profile.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loadLiveSpecs]
+  );
+
+  const handleDownload = useCallback(
+    async (format: HardwareExportFormat) => {
+      if (!specs) return;
+      const content = await exportHardwareSpecs(specs, format);
+      downloadTextFile(content, hardwareExportFilename(specs, format), exportMimeType(format));
+      setStatus(`${format} export downloaded.`);
+    },
+    [specs]
+  );
+
+  const handleCopy = useCallback(
+    async (format: HardwareExportFormat) => {
+      if (!specs) return;
+      const content = await exportHardwareSpecs(specs, format);
+      await copyText(content);
+      setStatus(`${format} export copied to clipboard.`);
+    },
+    [specs]
+  );
+
+  if (!specs) {
+    return (
+      <div className="machine-specs-page">
+        <Panel title="Machine Specs">
+          <div className="loading-state">
+            <RefreshCw size={22} />
+            <strong>{status}</strong>
+            {error ? <span>{error}</span> : <span>Preparing hardware probe data.</span>}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="machine-specs-page">
+      <Panel title="Hardware Probe">
+        <div className="hardware-toolbar">
+          <div className="hardware-title">
+            <Laptop size={24} />
+            <div>
+              <strong>{specs.name}</strong>
+              <span>
+                {specs.platform.os} {specs.platform.os_version} / {specs.platform.architecture}
+              </span>
+            </div>
+          </div>
+          <select
+            aria-label="Hardware source"
+            onChange={(event) => handleSourceChange(event.target.value)}
+            value={selectedSource}
+          >
+            <option value="__live">Live machine</option>
+            {fixtures.map((fixture) => (
+              <option key={fixture.id} value={fixture.id}>
+                {fixture.name}
+              </option>
+            ))}
+          </select>
+          <button className="secondary-button" disabled={loading} onClick={loadLiveSpecs} type="button">
+            <RefreshCw size={16} />
+            Refresh live
+          </button>
+        </div>
+        <div className="probe-status-row">
+          <span className={specs.source === "Live" ? "fit-pill smooth" : "fit-pill tight"}>
+            {specs.source}
+          </span>
+          <span>{status}</span>
+          {error ? <strong>{error}</strong> : null}
+        </div>
+      </Panel>
+
+      <div className="hardware-grid">
+        <Panel title="Platform">
+          <SpecRows
+            rows={[
+              ["Family", specs.platform.family],
+              ["Operating System", `${specs.platform.os} ${specs.platform.os_version}`],
+              ["Architecture", specs.platform.architecture],
+              ["Captured", formatTimestamp(specs.captured_at_ms)]
+            ]}
+          />
+        </Panel>
+
+        <Panel title="CPU and Memory">
+          <SpecRows
+            rows={[
+              ["CPU", specs.cpu.brand],
+              ["Physical Cores", String(specs.cpu.physical_cores)],
+              ["Logical Cores", String(specs.cpu.logical_cores)],
+              ["Memory", formatBytesGb(specs.memory.total_bytes)],
+              ["Unified Memory", specs.memory.unified_memory ? "Yes" : "No"]
+            ]}
+          />
+        </Panel>
+
+        <Panel title="Primary GPU">
+          <SpecRows
+            rows={[
+              ["GPU", primaryGpu?.name ?? "Unknown"],
+              ["Vendor", primaryGpu?.vendor ?? "Unknown"],
+              ["Memory / VRAM", formatBytesGb(primaryGpu?.memory_bytes ?? null)],
+              ["Integrated", primaryGpu?.integrated ? "Yes" : "No"],
+              ["Detected GPUs", String(specs.gpus.length)]
+            ]}
+          />
+        </Panel>
+
+        <Panel title="Storage">
+          <SpecRows
+            rows={[
+              ["Mount", primaryStorage?.mount ?? "Unknown"],
+              ["Total", formatBytesGb(primaryStorage?.total_bytes ?? null)],
+              ["Available", formatBytesGb(primaryStorage?.available_bytes ?? null)],
+              ["Volumes", String(specs.storage.length)]
+            ]}
+          />
+        </Panel>
+
+        <Panel title="System Load">
+          <div className="metric-grid">
+            <LoadMeter label="CPU" value={Math.round(specs.load.cpu_percent)} detail="Live or fixture" />
+            <LoadMeter
+              label="Memory"
+              value={Math.round(specs.load.memory_percent)}
+              detail={formatBytesGb(specs.memory.total_bytes)}
+              warn={specs.load.memory_percent >= 75}
+            />
+            <LoadMeter
+              label="GPU"
+              value={Math.round(specs.load.gpu_percent ?? 0)}
+              detail={specs.load.gpu_percent === null ? "Not reported" : "Live or fixture"}
+            />
+            <LoadMeter
+              label="VRAM"
+              value={Math.round(specs.load.vram_percent ?? 0)}
+              detail={specs.load.vram_percent === null ? "Not reported" : "Live or fixture"}
+            />
+          </div>
+          <p className="fine-print">
+            Live Stage 3 load values are conservative placeholders until background telemetry is
+            added in Stage 9.
+          </p>
+        </Panel>
+
+        <Panel title="Export Specs" className="hardware-export-panel">
+          <div className="export-actions">
+            <button className="secondary-button" type="button" onClick={() => handleDownload("Json")}>
+              <FileJson size={16} />
+              JSON
+            </button>
+            <button className="secondary-button" type="button" onClick={() => handleDownload("Csv")}>
+              <FileText size={16} />
+              CSV
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => handleDownload("Markdown")}
+            >
+              <FileText size={16} />
+              Markdown
+            </button>
+            <button className="secondary-button" type="button" onClick={() => handleCopy("Json")}>
+              <Clipboard size={16} />
+              Copy JSON
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => handleCopy("Markdown")}
+            >
+              <Clipboard size={16} />
+              Copy Markdown
+            </button>
+          </div>
+          <div className="fixture-summary">
+            <strong>Fixture coverage</strong>
+            <span>
+              Apple Silicon, Intel Mac 8/16/32 GB, and Windows GTX 1060 / 30 GB RAM.
+            </span>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="All GPUs and Volumes">
+        <div className="hardware-table-grid">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>GPU</th>
+                <th>Vendor</th>
+                <th>Memory</th>
+                <th>Integrated</th>
+              </tr>
+            </thead>
+            <tbody>
+              {specs.gpus.map((gpu) => (
+                <tr key={`${gpu.name}-${gpu.vendor}`}>
+                  <td>{gpu.name}</td>
+                  <td>{gpu.vendor}</td>
+                  <td>{formatBytesGb(gpu.memory_bytes)}</td>
+                  <td>{gpu.integrated ? "Yes" : "No"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Mount</th>
+                <th>Total</th>
+                <th>Available</th>
+              </tr>
+            </thead>
+            <tbody>
+              {specs.storage.map((volume) => (
+                <tr key={volume.mount}>
+                  <td>{volume.mount}</td>
+                  <td>{formatBytesGb(volume.total_bytes)}</td>
+                  <td>{formatBytesGb(volume.available_bytes)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
+      <Panel title="Raw JSON">
+        <pre className="raw-json">{rawJson}</pre>
       </Panel>
     </div>
   );
@@ -991,4 +1322,52 @@ function formatTimestamp(timestampMs: number): string {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(Number(timestampMs)));
+}
+
+function hardwareExportFilename(specs: HardwareSpecs, format: HardwareExportFormat): string {
+  const extension = format === "Json" ? "json" : format === "Csv" ? "csv" : "md";
+  return `${specs.id}-${Date.now()}.${extension}`;
+}
+
+function exportMimeType(format: HardwareExportFormat): string {
+  if (format === "Json") return "application/json";
+  if (format === "Csv") return "text/csv";
+  return "text/markdown";
+}
+
+function downloadTextFile(content: string, filename: string, mimeType: string) {
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function copyText(content: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(content);
+      return;
+    } catch {
+      // Fall back for browser previews or webviews that expose clipboard but reject writes.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = content;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

@@ -684,11 +684,119 @@ button:disabled {
 }
 
 .settings-grid,
-.logs-page {
+.logs-page,
+.machine-specs-page {
   display: grid;
   gap: 16px;
   max-width: 1100px;
   margin: 0 auto;
+}
+
+.machine-specs-page {
+  max-width: 1340px;
+}
+
+.hardware-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.hardware-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 260px auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.hardware-title {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.hardware-title div {
+  display: grid;
+  gap: 4px;
+}
+
+.hardware-title span,
+.probe-status-row,
+.fixture-summary span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hardware-toolbar select {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.probe-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 30px;
+  margin-top: 14px;
+}
+
+.probe-status-row strong {
+  color: var(--red);
+}
+
+.hardware-export-panel {
+  grid-column: span 2;
+}
+
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.fixture-summary {
+  display: grid;
+  gap: 5px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.hardware-table-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.raw-json {
+  overflow: auto;
+  max-height: 360px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 14px;
+  background: #f8fafc;
+  color: #2a3140;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.loading-state {
+  display: grid;
+  gap: 10px;
+  min-height: 160px;
+  align-content: center;
+  color: var(--muted);
+}
+
+.loading-state strong {
+  color: var(--text);
 }
 
 .settings-grid {
@@ -826,12 +934,14 @@ button:disabled {
   }
 
   .dashboard-grid,
-  .router-columns {
+  .router-columns,
+  .hardware-grid {
     grid-template-columns: 1fr 1fr;
   }
 
   .provider-panel,
-  .quick-actions {
+  .quick-actions,
+  .hardware-export-panel {
     grid-column: 1 / -1;
   }
 
@@ -841,5 +951,114 @@ button:disabled {
 
   .mode-grid {
     grid-template-columns: repeat(4, 1fr);
+  }
+
+  .hardware-toolbar,
+  .hardware-table-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .app-shell {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .sidebar {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .brand-row {
+    height: 56px;
+    padding: 0 16px;
+  }
+
+  .nav-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 8px;
+  }
+
+  .nav-item {
+    min-height: 42px;
+    padding: 0 10px;
+    font-size: 14px;
+  }
+
+  .sidebar-footer,
+  .provider-summary {
+    display: none;
+  }
+
+  .main-shell {
+    min-width: 0;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+    height: auto;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .topbar-status,
+  .topbar-actions {
+    flex-wrap: wrap;
+  }
+
+  .page-surface {
+    overflow: visible;
+    padding: 12px;
+  }
+
+  .dashboard-grid,
+  .router-columns,
+  .hardware-grid,
+  .settings-grid,
+  .empty-grid,
+  .hardware-toolbar,
+  .hardware-table-grid,
+  .test-prompt-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .actions-grid,
+  .mode-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .global-paused-banner,
+  .paused-banner {
+    grid-template-columns: auto 1fr;
+  }
+
+  .hardware-export-panel,
+  .settings-wide {
+    grid-column: auto;
+  }
+
+  .data-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .panel h2 {
+    padding: 15px 16px 11px;
+  }
+
+  .panel > :not(h2) {
+    margin: 14px 16px 16px;
   }
 }

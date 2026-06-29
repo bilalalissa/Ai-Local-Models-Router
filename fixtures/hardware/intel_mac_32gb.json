@@ -1,0 +1,46 @@
+{
+  "id": "intel-mac-32gb",
+  "name": "Intel Mac 32 GB",
+  "source": "Fixture",
+  "captured_at_ms": 1782768000000,
+  "platform": {
+    "os": "macOS",
+    "os_version": "14.4",
+    "architecture": "x86_64",
+    "family": "MacIntel"
+  },
+  "cpu": {
+    "brand": "Intel Core i9",
+    "physical_cores": 8,
+    "logical_cores": 16
+  },
+  "memory": {
+    "total_bytes": 34359738368,
+    "unified_memory": false
+  },
+  "gpus": [
+    {
+      "name": "AMD Radeon Pro 5500M",
+      "vendor": "AMD",
+      "memory_bytes": 8589934592,
+      "integrated": false
+    }
+  ],
+  "storage": [
+    {
+      "mount": "/",
+      "total_bytes": 1000240963584,
+      "available_bytes": 512092078080
+    }
+  ],
+  "load": {
+    "cpu_percent": 22.0,
+    "memory_percent": 44.0,
+    "gpu_percent": 16.0,
+    "vram_percent": 35.0
+  },
+  "notes": [
+    "Higher-memory Intel Mac fixture for larger local model tests.",
+    "Fixture used for Intel Mac 32 GB compatibility tests."
+  ]
+}
