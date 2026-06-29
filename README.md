@@ -6,10 +6,11 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 1: app shell and navigation. The Tauri
-desktop shell exists, but hardware probing, providers, model routing,
-installers, remote broker behavior, persistence, and pause/resume logic are
-intentionally deferred to later approved stages.
+This repository is currently at Stage 2: app state and pause/resume core. The
+Tauri desktop shell exists and exposes persisted pause/resume state, settings,
+history logging, UI banner state, and native menu pause/resume hooks. Hardware
+probing, providers, model routing, installers, remote broker behavior, and
+model/update automation are intentionally deferred to later approved stages.
 
 ## Stage Gate Rule
 
@@ -44,6 +45,9 @@ start the next implementation stage until the user explicitly approves it.
 - Stage 1 desktop shell under `apps/desktop`: Tauri v2, React, TypeScript,
   Vite, main navigation, empty page states, global app-state badge, and
   non-functional Pause UI placeholder.
+- Stage 2 pause/resume core: Rust `app_state` module, persisted pause settings,
+  pause history logs, Tauri commands, native menu hooks, paused banner, and
+  Dashboard/Router/Settings/Logs UI wiring.
 
 ## Planned Stack
 
@@ -93,9 +97,10 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 1 note: the shell uses static sample UI data only. Real hardware probes,
-providers, router decisions, installers, persistence, notifications, and remote
-broker/client behavior are intentionally implemented in later stages.
+Stage 2 note: pause/resume state is real and persisted. Provider, router,
+installer, updater, notification, and remote broker workers do not exist yet,
+so their paused behavior is represented by the app-state gate and suspended
+task summary until those modules are implemented in later stages.
 
 ## Visual Baseline
 
@@ -115,7 +120,7 @@ badge; amber paused states; no marketing hero treatment.
 ### Stages List:
 - [x] Stage 0 - Project Definition and Architecture
 - [x] Stage 1 - App Shell and Navigation
-- [ ] Stage 2 - App State and Pause/Resume Core
+- [x] Stage 2 - App State and Pause/Resume Core
 - [ ] Stage 3 - Hardware Detection and Specs Export
 - [ ] Stage 4 - Model Catalog and Compatibility Scoring
 - [ ] Stage 5 - Provider Adapter Layer With Mocked Providers
@@ -158,7 +163,7 @@ marked as a stub.
 - Add initial README run/build notes.
 - Stop and ask for approval.
 
-### Stage 2 - App State and Pause/Resume Core
+### [x] Stage 2 - App State and Pause/Resume Core
 
 - Implement `app_state`.
 - Add Running, Paused, Pausing, Resuming, Error states.

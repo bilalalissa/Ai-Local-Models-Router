@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Bell,
@@ -23,8 +23,18 @@ import {
   SlidersHorizontal,
   TerminalSquare
 } from "lucide-react";
+import {
+  type AppStateSnapshot,
+  type PauseDuration,
+  type PauseSettings,
+  type PauseSource,
+  getAppState,
+  pauseApp,
+  resumeApp,
+  subscribeAppState,
+  updatePauseSettings
+} from "./appState";
 
-type AppState = "Running" | "Paused";
 type PageId =
   | "dashboard"
   | "machine-specs"
@@ -50,6 +60,12 @@ type EmptyPage = {
   readiness: string[];
 };
 
+type PauseAction = {
+  label: string;
+  duration: PauseDuration;
+  reason: string;
+};
+
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Dashboard", icon: Home },
   { id: "machine-specs", label: "Machine Specs", icon: Cpu },
@@ -63,7 +79,7 @@ const navItems: NavItem[] = [
   { id: "logs", label: "Logs", icon: FileText }
 ];
 
-const pageContent: Record<Exclude<PageId, "dashboard" | "router">, EmptyPage> = {
+const pageContent: Record<Exclude<PageId, "dashboard" | "router" | "settings" | "logs">, EmptyPage> = {
   "machine-specs": {
     title: "Machine Specs",
     eyebrow: "Stage 1 page shell",
@@ -105,20 +121,6 @@ const pageContent: Record<Exclude<PageId, "dashboard" | "router">, EmptyPage> = 
     summary:
       "Metadata checks, update cards, and update history are implemented in Stage 10.",
     readiness: ["Available updates area", "History table", "Privacy mode note"]
-  },
-  settings: {
-    title: "Settings",
-    eyebrow: "Stage 1 page shell",
-    summary:
-      "Launch-at-login, notification, privacy, storage, and pause behavior settings are wired in later stages.",
-    readiness: ["Startup toggles", "Storage path row", "Notification preference row"]
-  },
-  logs: {
-    title: "Logs",
-    eyebrow: "Stage 1 page shell",
-    summary:
-      "Structured app, provider, install, and pause/resume logs are implemented as native state arrives.",
-    readiness: ["Log stream frame", "Filter controls", "Export action"]
   }
 };
 
@@ -128,24 +130,140 @@ const installedModels = [
   { name: "Phi-3.5 Mini", size: "3.8B", format: "Q4_K_M", fit: "Smooth", lastUsed: "2d ago" }
 ];
 
+const pauseActions: PauseAction[] = [
+  {
+    label: "Pause now",
+    duration: "UntilManualResume",
+    reason: "Pause until manually resumed"
+  },
+  {
+    label: "Pause after current generation",
+    duration: "AfterCurrentGeneration",
+    reason: "Pause after current generation"
+  },
+  {
+    label: "Pause for 15 minutes",
+    duration: { ForMinutes: 15 },
+    reason: "Pause for 15 minutes"
+  },
+  {
+    label: "Pause for 1 hour",
+    duration: { ForMinutes: 60 },
+    reason: "Pause for 1 hour"
+  }
+];
+
+const initialAppState: AppStateSnapshot = {
+  lifecycle_state: "Running",
+  settings: {
+    remember_pause_state_after_restart: true,
+    allow_critical_health_security_notifications_while_paused: true
+  },
+  paused_until_ms: null,
+  pause_reason: null,
+  suspended_tasks: {
+    routing_changes: 0,
+    update_checks: 0,
+    model_installs: 0,
+    remote_discovery: 0,
+    health_polling: 0
+  },
+  pause_history: []
+};
+
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>(() => pageFromHash());
-  const [appState] = useState<AppState>("Running");
+  const [appState, setAppState] = useState<AppStateSnapshot>(initialAppState);
   const activeLabel = useMemo(
     () => navItems.find((item) => item.id === activePage)?.label ?? "Dashboard",
     [activePage]
   );
+  const isPaused = appState.lifecycle_state === "Paused";
+
+  useEffect(() => {
+    const onHashChange = () => setActivePage(pageFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+    let unlisten: (() => void) | undefined;
+
+    getAppState()
+      .then((snapshot) => {
+        if (!ignore) {
+          setAppState(snapshot);
+        }
+      })
+      .catch(() => {
+        if (!ignore) {
+          setAppState(initialAppState);
+        }
+      });
+
+    subscribeAppState((snapshot) => setAppState(snapshot)).then((unsubscribe) => {
+      unlisten = unsubscribe;
+    });
+
+    return () => {
+      ignore = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const handlePause = useCallback(
+    async (source: PauseSource, action: PauseAction = pauseActions[0]) => {
+      const snapshot = await pauseApp({
+        source,
+        duration: action.duration,
+        reason: action.reason
+      });
+      setAppState(snapshot);
+    },
+    []
+  );
+
+  const handleResume = useCallback(async (source: PauseSource) => {
+    const snapshot = await resumeApp(source);
+    setAppState(snapshot);
+  }, []);
+
+  const handleSettingsChange = useCallback(async (settings: PauseSettings) => {
+    const snapshot = await updatePauseSettings(settings);
+    setAppState(snapshot);
+  }, []);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${isPaused ? "is-paused" : ""}`}>
       <Sidebar activePage={activePage} onNavigate={setActivePage} />
       <main className="main-shell">
-        <TopBar appState={appState} activeLabel={activeLabel} />
+        <TopBar
+          appState={appState}
+          activeLabel={activeLabel}
+          onPause={() => handlePause(topBarSource(activePage))}
+          onResume={() => handleResume(topBarSource(activePage))}
+        />
         <section className="page-surface">
+          {isPaused ? (
+            <PausedBanner
+              suspendedTotal={totalSuspended(appState)}
+              onResume={() => handleResume(topBarSource(activePage))}
+            />
+          ) : null}
           {activePage === "dashboard" ? (
-            <Dashboard />
+            <Dashboard appState={appState} onPause={handlePause} onResume={handleResume} />
           ) : activePage === "router" ? (
-            <RouterShell />
+            <RouterShell appState={appState} onPause={handlePause} onResume={handleResume} />
+          ) : activePage === "settings" ? (
+            <SettingsPage
+              appState={appState}
+              onPause={handlePause}
+              onResume={handleResume}
+              onSettingsChange={handleSettingsChange}
+            />
+          ) : activePage === "logs" ? (
+            <LogsPage appState={appState} />
           ) : (
             <EmptyStatePage page={pageContent[activePage]} />
           )}
@@ -198,7 +316,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 1 shell</span>
+        <span>Stage 2 app state</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -206,7 +324,18 @@ function Sidebar({
   );
 }
 
-function TopBar({ appState, activeLabel }: { appState: AppState; activeLabel: string }) {
+function TopBar({
+  appState,
+  activeLabel,
+  onPause,
+  onResume
+}: {
+  appState: AppStateSnapshot;
+  activeLabel: string;
+  onPause: () => void;
+  onResume: () => void;
+}) {
+  const isPaused = appState.lifecycle_state === "Paused";
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -216,13 +345,17 @@ function TopBar({ appState, activeLabel }: { appState: AppState; activeLabel: st
         <span className="active-page-label">{activeLabel}</span>
       </div>
       <div className="topbar-status">
-        <span className="state-pill running">
-          <span className="dot green" />
-          {appState}
+        <span className={`state-pill ${isPaused ? "paused" : "running"}`}>
+          <span className={isPaused ? "dot amber" : "dot green"} />
+          {appState.lifecycle_state}
         </span>
-        <button className="pause-button" type="button" aria-label="Pause placeholder">
-          <Pause size={16} />
-          Pause
+        <button
+          className={isPaused ? "resume-button" : "pause-button"}
+          type="button"
+          onClick={isPaused ? onResume : onPause}
+        >
+          {isPaused ? <Play size={16} /> : <Pause size={16} />}
+          {isPaused ? "Resume" : "Pause"}
         </button>
         <div className="provider-summary">
           <span className="dot green" />
@@ -244,7 +377,16 @@ function TopBar({ appState, activeLabel }: { appState: AppState; activeLabel: st
   );
 }
 
-function Dashboard() {
+function Dashboard({
+  appState,
+  onPause,
+  onResume
+}: {
+  appState: AppStateSnapshot;
+  onPause: (source: PauseSource, action?: PauseAction) => Promise<void>;
+  onResume: (source: PauseSource) => Promise<void>;
+}) {
+  const isPaused = appState.lifecycle_state === "Paused";
   return (
     <div className="dashboard-grid">
       <Panel className="machine-panel" title="Machine Summary">
@@ -272,7 +414,7 @@ function Dashboard() {
           <LoadMeter label="Memory" value={68} detail="12.2 / 18 GB" warn />
           <LoadMeter label="VRAM" value={52} detail="Unified" />
         </div>
-        <p className="fine-print">Static Stage 1 sample values; real detection begins in Stage 3.</p>
+        <p className="fine-print">Static Stage 2 sample values; real detection begins in Stage 3.</p>
       </Panel>
 
       <Panel title="Active Provider" className="provider-panel">
@@ -281,6 +423,7 @@ function Dashboard() {
         <StatusLine label="Active Model" value="Qwen3 8B" />
         <StatusLine label="Compatibility" value="Good" badge="good" />
         <StatusLine label="Router Mode" value="Auto (Local preferred)" />
+        <StatusLine label="App State" value={appState.lifecycle_state} />
       </Panel>
 
       <Panel title="Installed Models" className="wide-panel">
@@ -337,7 +480,11 @@ function Dashboard() {
 
       <Panel title="Quick Actions" className="quick-actions">
         <div className="actions-grid">
-          <ActionButton icon={Pause} label="Pause app" />
+          <ActionButton
+            icon={isPaused ? Play : Pause}
+            label={isPaused ? "Resume app" : "Pause app"}
+            onClick={() => (isPaused ? onResume("Dashboard") : onPause("Dashboard"))}
+          />
           <ActionButton icon={Download} label="Install recommended setup" />
           <ActionButton icon={Play} label="Start provider" />
           <ActionButton icon={MessageSquare} label="Test chat" />
@@ -345,11 +492,44 @@ function Dashboard() {
           <ActionButton icon={Settings} label="Open settings" />
         </div>
       </Panel>
+
+      <Panel title="Pause Options" className="pause-options-panel">
+        <div className="pause-options">
+          {pauseActions.map((action) => (
+            <button
+              className="secondary-button"
+              key={action.label}
+              type="button"
+              onClick={() => onPause("Dashboard", action)}
+              disabled={isPaused}
+            >
+              {action.label}
+            </button>
+          ))}
+          <button
+            className="resume-button"
+            type="button"
+            onClick={() => onResume("Dashboard")}
+            disabled={!isPaused}
+          >
+            Resume now
+          </button>
+        </div>
+      </Panel>
     </div>
   );
 }
 
-function RouterShell() {
+function RouterShell({
+  appState,
+  onPause,
+  onResume
+}: {
+  appState: AppStateSnapshot;
+  onPause: (source: PauseSource, action?: PauseAction) => Promise<void>;
+  onResume: (source: PauseSource) => Promise<void>;
+}) {
+  const isPaused = appState.lifecycle_state === "Paused";
   const modes = [
     ["Auto", Route],
     ["Manual", SlidersHorizontal],
@@ -367,29 +547,49 @@ function RouterShell() {
           <Pause size={24} />
         </div>
         <div>
-          <strong>Pause controls arrive in Stage 2.</strong>
+          <strong>
+            {isPaused ? "Local AI Router is paused." : "Router automation is running."}
+          </strong>
           <span>
-            This Stage 1 screen preserves the accepted paused layout without changing app state.
+            {isPaused
+              ? "Automation, update checks, routing changes, and remote discovery are suspended."
+              : "Use pause controls to suspend router automation before Stage 8 wiring."}
           </span>
         </div>
         <button className="secondary-button" type="button">
           Pause settings
         </button>
-        <button className="secondary-button" type="button">
-          View suspended tasks
+        <button
+          className={isPaused ? "resume-button" : "secondary-button"}
+          type="button"
+          onClick={() => (isPaused ? onResume("Router") : onPause("Router"))}
+        >
+          {isPaused ? "Resume" : "Pause now"}
         </button>
       </div>
 
       <Panel title="Routing mode">
         <div className="mode-grid">
           {modes.map(([label, Icon]) => (
-            <button className={label === "Auto" ? "mode-card active" : "mode-card"} key={label} type="button">
+            <button
+              className={
+                (isPaused && label === "Paused") || (!isPaused && label === "Auto")
+                  ? "mode-card active"
+                  : "mode-card"
+              }
+              key={label}
+              type="button"
+            >
               <Icon size={22} />
               <span>{label}</span>
             </button>
           ))}
         </div>
-        <p className="fine-print">Routing controls are non-functional until Stage 8.</p>
+        <p className="fine-print">
+          {isPaused
+            ? "Routing is paused. No automatic decisions or changes will be made."
+            : "Routing controls are non-functional until Stage 8."}
+        </p>
       </Panel>
 
       <div className="router-columns">
@@ -415,11 +615,12 @@ function RouterShell() {
         </Panel>
 
         <Panel title="Suspended automation">
-          <SuspendedRow label="Pending routing changes" value="0" />
-          <SuspendedRow label="Update checks" value="0" />
-          <SuspendedRow label="Model pulls / updates" value="0" />
-          <SuspendedRow label="Remote discovery" value="0" />
-          <SuspendedRow label="Metric collection" value="0" />
+          <SuspendedRow label="Pending routing changes" value={String(appState.suspended_tasks.routing_changes)} />
+          <SuspendedRow label="Update checks" value={String(appState.suspended_tasks.update_checks)} />
+          <SuspendedRow label="Model pulls / updates" value={String(appState.suspended_tasks.model_installs)} />
+          <SuspendedRow label="Remote discovery" value={String(appState.suspended_tasks.remote_discovery)} />
+          <SuspendedRow label="Metric collection" value={String(appState.suspended_tasks.health_polling)} />
+          <SuspendedRow label="Total suspended tasks" value={String(totalSuspended(appState))} />
         </Panel>
       </div>
 
@@ -431,14 +632,179 @@ function RouterShell() {
             placeholder="Explain how transformers work in large language models."
           />
           <div className="test-actions">
-            <button className="ghost-button" disabled type="button">
-              Resume to run
+            <button
+              className={isPaused ? "secondary-button" : "ghost-button"}
+              disabled={!isPaused}
+              type="button"
+              onClick={() => onResume("Router")}
+            >
+              {isPaused ? "Resume to run" : "Run available in Stage 8"}
             </button>
             <button className="secondary-button" type="button">
               Run once while paused
             </button>
           </div>
         </div>
+      </Panel>
+    </div>
+  );
+}
+
+function PausedBanner({
+  suspendedTotal,
+  onResume
+}: {
+  suspendedTotal: number;
+  onResume: () => void;
+}) {
+  return (
+    <div className="global-paused-banner">
+      <div className="pause-emblem compact">
+        <Pause size={18} />
+      </div>
+      <div>
+        <strong>Local AI Router is paused.</strong>
+        <span>Automation, update checks, routing changes, and remote discovery are suspended.</span>
+      </div>
+      <span className="suspended-total">{suspendedTotal} suspended</span>
+      <button className="resume-button" type="button" onClick={onResume}>
+        <Play size={15} />
+        Resume
+      </button>
+    </div>
+  );
+}
+
+function SettingsPage({
+  appState,
+  onPause,
+  onResume,
+  onSettingsChange
+}: {
+  appState: AppStateSnapshot;
+  onPause: (source: PauseSource, action?: PauseAction) => Promise<void>;
+  onResume: (source: PauseSource) => Promise<void>;
+  onSettingsChange: (settings: PauseSettings) => Promise<void>;
+}) {
+  const isPaused = appState.lifecycle_state === "Paused";
+  const settings = appState.settings;
+
+  return (
+    <div className="settings-grid">
+      <Panel title="Pause Behavior">
+        <div className="settings-list">
+          <label className="setting-row">
+            <span>
+              <strong>Remember pause state after restart</strong>
+              <small>Reopen in Paused state when the app was manually paused.</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.remember_pause_state_after_restart}
+              onChange={(event) =>
+                onSettingsChange({
+                  ...settings,
+                  remember_pause_state_after_restart: event.target.checked
+                })
+              }
+            />
+          </label>
+          <label className="setting-row">
+            <span>
+              <strong>Allow critical health/security notifications while paused</strong>
+              <small>Non-critical notifications remain suppressed in paused mode.</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={settings.allow_critical_health_security_notifications_while_paused}
+              onChange={(event) =>
+                onSettingsChange({
+                  ...settings,
+                  allow_critical_health_security_notifications_while_paused: event.target.checked
+                })
+              }
+            />
+          </label>
+        </div>
+      </Panel>
+
+      <Panel title="Pause Controls">
+        <div className="pause-options settings-controls">
+          {pauseActions.map((action) => (
+            <button
+              className="secondary-button"
+              disabled={isPaused}
+              key={action.label}
+              onClick={() => onPause("Settings", action)}
+              type="button"
+            >
+              {action.label}
+            </button>
+          ))}
+          <button
+            className="resume-button"
+            disabled={!isPaused}
+            onClick={() => onResume("Settings")}
+            type="button"
+          >
+            Resume now
+          </button>
+        </div>
+      </Panel>
+
+      <Panel title="Current Pause State" className="settings-wide">
+        <div className="state-summary">
+          <StatusLine label="State" value={appState.lifecycle_state} />
+          <StatusLine label="Reason" value={appState.pause_reason ?? "Not paused"} />
+          <StatusLine
+            label="Paused until"
+            value={appState.paused_until_ms ? formatTimestamp(appState.paused_until_ms) : "Manual resume"}
+          />
+          <StatusLine label="Suspended tasks" value={String(totalSuspended(appState))} />
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function LogsPage({ appState }: { appState: AppStateSnapshot }) {
+  const history = [...appState.pause_history].reverse();
+
+  return (
+    <div className="logs-page">
+      <Panel title="Pause / Resume Logs">
+        {history.length === 0 ? (
+          <div className="empty-log-state">
+            <TerminalSquare size={22} />
+            <strong>No pause or resume actions logged yet.</strong>
+            <span>Use Dashboard, Router, Settings, or the native menu to create log entries.</span>
+          </div>
+        ) : (
+          <table className="data-table logs-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Source</th>
+                <th>State</th>
+                <th>Reason</th>
+                <th>Affected Tasks</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((entry) => (
+                <tr key={`${entry.timestamp_ms}-${entry.source}-${entry.new_state}`}>
+                  <td>{formatTimestamp(entry.timestamp_ms)}</td>
+                  <td>{entry.source}</td>
+                  <td>
+                    {entry.previous_state} {"->"} {entry.new_state}
+                  </td>
+                  <td>{entry.reason}</td>
+                  <td>{entry.active_tasks_affected.join(", ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </Panel>
     </div>
   );
@@ -565,9 +931,17 @@ function RemoteRow({
   );
 }
 
-function ActionButton({ icon: Icon, label }: { icon: typeof Home; label: string }) {
+function ActionButton({
+  icon: Icon,
+  label,
+  onClick
+}: {
+  icon: typeof Home;
+  label: string;
+  onClick?: () => void;
+}) {
   return (
-    <button className="action-button" type="button">
+    <button className="action-button" type="button" onClick={onClick}>
       <Icon size={21} />
       <span>{label}</span>
     </button>
@@ -593,4 +967,28 @@ function SuspendedRow({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function topBarSource(activePage: PageId): PauseSource {
+  if (activePage === "router") return "Router";
+  if (activePage === "settings") return "Settings";
+  return "Dashboard";
+}
+
+function totalSuspended(snapshot: AppStateSnapshot): number {
+  const tasks = snapshot.suspended_tasks;
+  return (
+    tasks.routing_changes +
+    tasks.update_checks +
+    tasks.model_installs +
+    tasks.remote_discovery +
+    tasks.health_polling
+  );
+}
+
+function formatTimestamp(timestampMs: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(Number(timestampMs)));
 }
