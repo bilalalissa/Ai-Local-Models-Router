@@ -47,6 +47,16 @@ import {
   loadHardwareFixture,
   refreshHardwareSpecs
 } from "./hardware";
+import {
+  type CompatibilityResult,
+  type PreferenceTag,
+  type ProviderKind,
+  type UseCase,
+  preferenceOptions,
+  providerOptions,
+  scoreModels,
+  useCaseOptions
+} from "./modelCatalog";
 
 type PageId =
   | "dashboard"
@@ -93,16 +103,9 @@ const navItems: NavItem[] = [
 ];
 
 const pageContent: Record<
-  Exclude<PageId, "dashboard" | "machine-specs" | "router" | "settings" | "logs">,
+  Exclude<PageId, "dashboard" | "machine-specs" | "model-fit-map" | "router" | "settings" | "logs">,
   EmptyPage
 > = {
-  "model-fit-map": {
-    title: "Model Fit Map",
-    eyebrow: "Stage 1 page shell",
-    summary:
-      "Compatibility scoring and seeded recommendations are implemented in Stage 4.",
-    readiness: ["Model table frame", "Filter rail", "Compatibility legend"]
-  },
   models: {
     title: "Models",
     eyebrow: "Stage 1 page shell",
@@ -264,6 +267,8 @@ export default function App() {
             <Dashboard appState={appState} onPause={handlePause} onResume={handleResume} />
           ) : activePage === "machine-specs" ? (
             <MachineSpecsPage />
+          ) : activePage === "model-fit-map" ? (
+            <ModelFitMapPage appState={appState} />
           ) : activePage === "router" ? (
             <RouterShell appState={appState} onPause={handlePause} onResume={handleResume} />
           ) : activePage === "settings" ? (
@@ -327,7 +332,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 3 hardware</span>
+          <span>Stage 4 model fit</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -851,6 +856,280 @@ function MachineSpecsPage() {
   );
 }
 
+function ModelFitMapPage({ appState }: { appState: AppStateSnapshot }) {
+  const [hardware, setHardware] = useState<HardwareSpecs | null>(null);
+  const [fixtures, setFixtures] = useState<HardwareFixtureSummary[]>([]);
+  const [selectedHardware, setSelectedHardware] = useState("__live");
+  const [useCase, setUseCase] = useState<UseCase>("GeneralChat");
+  const [preferredProvider, setPreferredProvider] = useState<ProviderKind | "">("");
+  const [preferences, setPreferences] = useState<PreferenceTag[]>(["Balanced"]);
+  const [installedOnly, setInstalledOnly] = useState(false);
+  const [results, setResults] = useState<CompatibilityResult[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [status, setStatus] = useState("Loading model fit map...");
+  const [error, setError] = useState<string | null>(null);
+  const appPaused = appState.lifecycle_state === "Paused";
+
+  useEffect(() => {
+    let ignore = false;
+    Promise.all([refreshHardwareSpecs(), listHardwareFixtures()])
+      .then(([nextHardware, nextFixtures]) => {
+        if (ignore) return;
+        setHardware(nextHardware);
+        setFixtures(nextFixtures);
+        setStatus("Live hardware profile loaded.");
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatus("Live hardware profile failed. Use a fixture profile.");
+        listHardwareFixtures()
+          .then((nextFixtures) => {
+            if (!ignore) setFixtures(nextFixtures);
+          })
+          .catch(() => undefined);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hardware) return;
+    let ignore = false;
+    scoreModels({
+      hardware,
+      use_case: useCase,
+      preferred_provider: preferredProvider || null,
+      preference_tags: preferences,
+      installed_only: installedOnly,
+      app_paused: appPaused
+    })
+      .then((nextResults) => {
+        if (ignore) return;
+        setResults(nextResults);
+        setSelectedModelId((current) => current ?? nextResults[0]?.model.id ?? null);
+        setStatus(`${nextResults.length} model fits scored for ${hardware.name}.`);
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatus("Model scoring failed.");
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [hardware, useCase, preferredProvider, preferences, installedOnly, appPaused]);
+
+  const selectedResult = useMemo(
+    () => results.find((result) => result.model.id === selectedModelId) ?? results[0] ?? null,
+    [results, selectedModelId]
+  );
+
+  const handleHardwareChange = useCallback(async (hardwareId: string) => {
+    setSelectedHardware(hardwareId);
+    setError(null);
+    try {
+      const nextHardware =
+        hardwareId === "__live" ? await refreshHardwareSpecs() : await loadHardwareFixture(hardwareId);
+      setHardware(nextHardware);
+      setSelectedModelId(null);
+      setStatus(`${hardwareId === "__live" ? "Live" : "Fixture"} hardware profile loaded.`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatus("Could not load hardware profile.");
+    }
+  }, []);
+
+  const togglePreference = useCallback((tag: PreferenceTag) => {
+    setPreferences((current) =>
+      current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]
+    );
+  }, []);
+
+  if (!hardware) {
+    return (
+      <div className="model-fit-page">
+        <Panel title="Model Fit Map">
+          <div className="loading-state">
+            <FileBarChart size={22} />
+            <strong>{status}</strong>
+            {error ? <span>{error}</span> : <span>Preparing hardware and model catalog data.</span>}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="model-fit-page">
+      <Panel title="Model Fit Map">
+        <div className="fit-toolbar">
+          <div className="hardware-title">
+            <FileBarChart size={24} />
+            <div>
+              <strong>{hardware.name}</strong>
+              <span>
+                {hardware.platform.family} / {formatBytesGb(hardware.memory.total_bytes)} memory
+              </span>
+            </div>
+          </div>
+          <select
+            aria-label="Fit hardware profile"
+            onChange={(event) => handleHardwareChange(event.target.value)}
+            value={selectedHardware}
+          >
+            <option value="__live">Live machine</option>
+            {fixtures.map((fixture) => (
+              <option key={fixture.id} value={fixture.id}>
+                {fixture.name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Fit use case"
+            onChange={(event) => setUseCase(event.target.value as UseCase)}
+            value={useCase}
+          >
+            {useCaseOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Preferred provider"
+            onChange={(event) => setPreferredProvider(event.target.value as ProviderKind | "")}
+            value={preferredProvider}
+          >
+            {providerOptions.map((option) => (
+              <option key={option.value || "any"} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="fit-filter-row">
+          <div className="preference-chips" aria-label="Preference filters">
+            {preferenceOptions.map((option) => (
+              <button
+                className={preferences.includes(option.value) ? "chip active" : "chip"}
+                key={option.value}
+                onClick={() => togglePreference(option.value)}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <label className="compact-check">
+            <input
+              checked={installedOnly}
+              onChange={(event) => setInstalledOnly(event.target.checked)}
+              type="checkbox"
+            />
+            Installed only
+          </label>
+        </div>
+        <div className="probe-status-row">
+          <span className={appPaused ? "fit-pill tight" : "fit-pill smooth"}>
+            {appPaused ? "Paused scoring" : "Live scoring"}
+          </span>
+          <span>{status}</span>
+          {error ? <strong>{error}</strong> : null}
+        </div>
+      </Panel>
+
+      <div className="fit-summary-grid">
+        {(["Smooth", "Good", "Tight", "Avoid"] as const).map((label) => (
+          <div className={`fit-legend-card ${label.toLowerCase()}`} key={label}>
+            <strong>{results.filter((result) => result.label === label).length}</strong>
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="fit-content-grid">
+        <Panel title="Compatibility Results" className="fit-table-panel">
+          <table className="data-table fit-results-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Fit</th>
+                <th>Score</th>
+                <th>Provider</th>
+                <th>Format</th>
+                <th>Size</th>
+                <th>Installed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {results.map((result) => (
+                <tr
+                  className={selectedResult?.model.id === result.model.id ? "selected-row" : ""}
+                  key={result.model.id}
+                  onClick={() => setSelectedModelId(result.model.id)}
+                >
+                  <td>
+                    <strong>{result.model.display_name}</strong>
+                    <span>{result.model.family}</span>
+                  </td>
+                  <td>
+                    <span className={`fit-pill ${result.label.toLowerCase()}`}>
+                      {result.label}
+                    </span>
+                  </td>
+                  <td>{result.score}</td>
+                  <td>{result.model.providers.join(", ")}</td>
+                  <td>
+                    {result.model.format} / {result.model.quantization}
+                  </td>
+                  <td>{formatBytesGb(result.model.size_bytes)}</td>
+                  <td>{result.model.installed ? "Yes" : "No"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Panel>
+
+        <Panel title="Score Breakdown">
+          {selectedResult ? (
+            <div className="score-breakdown">
+              <div className="score-heading">
+                <strong>{selectedResult.model.display_name}</strong>
+                <span className={`fit-pill ${selectedResult.label.toLowerCase()}`}>
+                  {selectedResult.label} {selectedResult.score}
+                </span>
+              </div>
+              {Object.entries(selectedResult.inputs).map(([name, value]) => (
+                <ScoreInputBar key={name} label={scoreInputLabel(name)} value={Number(value)} />
+              ))}
+              {selectedResult.blockers.length > 0 ? (
+                <div className="blocker-list">
+                  <strong>Blockers</strong>
+                  {selectedResult.blockers.map((blocker) => (
+                    <span key={blocker}>{blocker}</span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="reason-list">
+                <strong>Reasons</strong>
+                {selectedResult.reasons.slice(0, 6).map((reason) => (
+                  <span key={reason}>{reason}</span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <span className="fine-print">No model result selected.</span>
+          )}
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
 function RouterShell({
   appState,
   onPause,
@@ -1217,6 +1496,18 @@ function LoadMeter({
   );
 }
 
+function ScoreInputBar({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="score-input-row">
+      <span>{label}</span>
+      <div className="score-input-meter">
+        <span style={{ width: `${value}%` }} />
+      </div>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function StatusLine({
   label,
   value,
@@ -1370,4 +1661,21 @@ async function copyText(content: string) {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function scoreInputLabel(name: string): string {
+  const labels: Record<string, string> = {
+    ram: "RAM",
+    vram: "VRAM",
+    cpu_load: "CPU load",
+    gpu_load: "GPU load",
+    provider_support: "Provider",
+    disk: "Disk",
+    platform: "Platform",
+    use_case: "Use case",
+    preference: "Preference",
+    installed_status: "Installed",
+    pause_state: "Pause state"
+  };
+  return labels[name] ?? name;
 }

@@ -1,5 +1,6 @@
 mod app_state;
 mod hardware_probe;
+mod model_catalog;
 
 use app_state::{
     state_file_path, AppStateSnapshot, AppStateStore, PauseHistoryEntry, PauseRequest,
@@ -8,6 +9,10 @@ use app_state::{
 use hardware_probe::{
     export_specs, list_fixtures, load_fixture, probe_live_specs, HardwareExportFormat,
     HardwareFixtureSummary, HardwareSpecs,
+};
+use model_catalog::{
+    load_model_catalog, score_model_catalog, CompatibilityResult, ModelEntry,
+    ScoreModelCatalogRequest,
 };
 use std::sync::Mutex;
 use tauri::{
@@ -100,6 +105,16 @@ fn export_hardware_specs(
     export_specs(&specs, format)
 }
 
+#[tauri::command]
+fn get_model_catalog() -> Result<Vec<ModelEntry>, String> {
+    load_model_catalog()
+}
+
+#[tauri::command]
+fn score_models(request: ScoreModelCatalogRequest) -> Result<Vec<CompatibilityResult>, String> {
+    score_model_catalog(request)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -122,7 +137,9 @@ pub fn run() {
             refresh_hardware_specs,
             list_hardware_fixtures,
             load_hardware_fixture,
-            export_hardware_specs
+            export_hardware_specs,
+            get_model_catalog,
+            score_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local AI Router desktop shell");

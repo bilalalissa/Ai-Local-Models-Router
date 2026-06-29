@@ -379,6 +379,12 @@ button:disabled {
   color: #a76708;
 }
 
+.fit-pill.avoid {
+  border: 1px solid #f0b7ad;
+  background: #fff0ed;
+  color: #b93725;
+}
+
 .spec-rows {
   display: grid;
 }
@@ -685,14 +691,16 @@ button:disabled {
 
 .settings-grid,
 .logs-page,
-.machine-specs-page {
+.machine-specs-page,
+.model-fit-page {
   display: grid;
   gap: 16px;
   max-width: 1100px;
   margin: 0 auto;
 }
 
-.machine-specs-page {
+.machine-specs-page,
+.model-fit-page {
   max-width: 1340px;
 }
 
@@ -797,6 +805,205 @@ button:disabled {
 
 .loading-state strong {
   color: var(--text);
+}
+
+.fit-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 230px 180px 180px;
+  align-items: center;
+  gap: 14px;
+}
+
+.fit-toolbar select {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.fit-filter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.preference-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.chip.active {
+  border-color: #9fc4f7;
+  background: #eef6ff;
+  color: #1f68c9;
+}
+
+.compact-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.compact-check input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--blue);
+}
+
+.fit-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.fit-legend-card {
+  display: grid;
+  gap: 4px;
+  min-height: 78px;
+  align-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.fit-legend-card strong {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.fit-legend-card span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.fit-legend-card.smooth {
+  border-color: #b7d8ff;
+}
+
+.fit-legend-card.good {
+  border-color: #b7dfc1;
+}
+
+.fit-legend-card.tight {
+  border-color: #f4d08d;
+}
+
+.fit-legend-card.avoid {
+  border-color: #f0b7ad;
+}
+
+.fit-content-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(360px, 0.85fr);
+  gap: 16px;
+}
+
+.fit-table-panel {
+  min-width: 0;
+}
+
+.fit-results-table tbody tr {
+  cursor: pointer;
+}
+
+.fit-results-table tbody tr:hover,
+.selected-row {
+  background: #f6f9fd;
+}
+
+.fit-results-table td:first-child {
+  display: grid;
+  gap: 3px;
+  white-space: normal;
+}
+
+.fit-results-table td:first-child span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.score-breakdown {
+  display: grid;
+  gap: 12px;
+}
+
+.score-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.score-input-row {
+  display: grid;
+  grid-template-columns: 98px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.score-input-row strong {
+  color: var(--text);
+  text-align: right;
+}
+
+.score-input-meter {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: #e3e8ef;
+}
+
+.score-input-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--blue);
+}
+
+.blocker-list,
+.reason-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.blocker-list strong,
+.reason-list strong {
+  color: var(--text);
+}
+
+.blocker-list span {
+  color: #b93725;
 }
 
 .settings-grid {
@@ -935,7 +1142,9 @@ button:disabled {
 
   .dashboard-grid,
   .router-columns,
-  .hardware-grid {
+  .hardware-grid,
+  .fit-summary-grid,
+  .fit-content-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -954,7 +1163,12 @@ button:disabled {
   }
 
   .hardware-toolbar,
-  .hardware-table-grid {
+  .hardware-table-grid,
+  .fit-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .fit-content-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1025,12 +1239,20 @@ button:disabled {
   .dashboard-grid,
   .router-columns,
   .hardware-grid,
+  .fit-summary-grid,
+  .fit-content-grid,
   .settings-grid,
   .empty-grid,
   .hardware-toolbar,
+  .fit-toolbar,
   .hardware-table-grid,
   .test-prompt-shell {
     grid-template-columns: 1fr;
+  }
+
+  .fit-filter-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .actions-grid,

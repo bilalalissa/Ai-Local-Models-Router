@@ -6,11 +6,11 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 3: hardware detection and specs export.
-The Tauri desktop shell exists, exposes persisted pause/resume state, and now
-includes native hardware probing, fixture-driven hardware profiles, the Machine
-Specs page, and JSON/CSV/Markdown export and clipboard copy controls.
-Providers, model routing, installers, remote broker behavior, and model/update
+This repository is currently at Stage 4: model catalog and compatibility
+scoring. The Tauri desktop shell exists, exposes persisted pause/resume state,
+includes native hardware probing and specs export, and now scores a seeded local
+model catalog against live or fixture hardware profiles. Providers, model
+routing execution, installers, remote broker behavior, and model/update
 automation are intentionally deferred to later approved stages.
 
 ## Stage Gate Rule
@@ -52,6 +52,10 @@ start the next implementation stage until the user explicitly approves it.
 - Stage 3 hardware detection: Rust `hardware_probe` module, macOS/Windows probe
   paths, required hardware fixtures, Machine Specs live/fixture UI, and
   JSON/CSV/Markdown export plus copy-to-clipboard controls.
+- Stage 4 model compatibility: Rust `model_catalog` module, seeded model
+  catalog, Smooth/Good/Tight/Avoid scoring labels, required scoring inputs,
+  and Model Fit Map UI with hardware, use case, provider, preference, installed,
+  and pause-state filters.
 
 ## Planned Stack
 
@@ -101,10 +105,10 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 3 note: hardware specs can be loaded from the live native probe or from
-fixtures. Live load percentages remain conservative placeholders until
-background telemetry is added in Stage 9. Provider, router, installer, updater,
-notification, and remote broker workers do not exist yet.
+Stage 4 note: compatibility scoring is real and fixture-tested, but provider
+execution, model downloads, router decisions, updater checks, notifications,
+and remote broker workers do not exist yet. Live hardware load values remain
+conservative placeholders until background telemetry is added in Stage 9.
 
 ## Visual Baseline
 
@@ -126,7 +130,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 1 - App Shell and Navigation
 - [x] Stage 2 - App State and Pause/Resume Core
 - [x] Stage 3 - Hardware Detection and Specs Export
-- [ ] Stage 4 - Model Catalog and Compatibility Scoring
+- [x] Stage 4 - Model Catalog and Compatibility Scoring
 - [ ] Stage 5 - Provider Adapter Layer With Mocked Providers
 - [ ] Stage 6 - Real Local Provider Adapters
 - [ ] Stage 7 - Runtime and Model Installation Flow
@@ -188,7 +192,7 @@ marked as a stub.
 - Test all hardware fixtures.
 - Stop and ask for approval.
 
-### Stage 4 - Model Catalog and Compatibility Scoring
+### [x] Stage 4 - Model Catalog and Compatibility Scoring
 
 - Implement `model_catalog`.
 - Add seed model catalog for Apple Silicon, Intel Mac, and Windows.
