@@ -6,9 +6,10 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 0: architecture and project definition
-only. There is intentionally no Tauri scaffold, Rust crate, frontend code, or
-provider implementation yet.
+This repository is currently at Stage 1: app shell and navigation. The Tauri
+desktop shell exists, but hardware probing, providers, model routing,
+installers, remote broker behavior, persistence, and pause/resume logic are
+intentionally deferred to later approved stages.
 
 ## Stage Gate Rule
 
@@ -40,6 +41,9 @@ start the next implementation stage until the user explicitly approves it.
   behavior, persistence, security, and UI baseline.
 - [Stage Checklist](docs/STAGE_CHECKLIST.md): implementation sequence for
   Stages 1-14 with mandatory stop points.
+- Stage 1 desktop shell under `apps/desktop`: Tauri v2, React, TypeScript,
+  Vite, main navigation, empty page states, global app-state badge, and
+  non-functional Pause UI placeholder.
 
 ## Planned Stack
 
@@ -50,6 +54,48 @@ start the next implementation stage until the user explicitly approves it.
 - Secure storage: OS keychain or credential store through Rust `keyring`.
 - Test data: JSON fixtures for hardware specs, provider metadata, and model
   catalogs.
+
+## Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run the React/Vite shell in a browser:
+
+```bash
+npm run dev
+```
+
+Run the Tauri desktop shell:
+
+```bash
+npm run tauri:dev
+```
+
+Build the frontend:
+
+```bash
+npm run build
+```
+
+Build the macOS desktop bundle from macOS:
+
+```bash
+npm run build:macos
+```
+
+Build the Windows installer from Windows:
+
+```powershell
+npm run build:windows
+```
+
+Stage 1 note: the shell uses static sample UI data only. Real hardware probes,
+providers, router decisions, installers, persistence, notifications, and remote
+broker/client behavior are intentionally implemented in later stages.
 
 ## Visual Baseline
 
@@ -66,6 +112,23 @@ badge; amber paused states; no marketing hero treatment.
 
 ## Implementation Stages
 
+### Stages List:
+- [x] Stage 0 - Project Definition and Architecture
+- [x] Stage 1 - App Shell and Navigation
+- [ ] Stage 2 - App State and Pause/Resume Core
+- [ ] Stage 3 - Hardware Detection and Specs Export
+- [ ] Stage 4 - Model Catalog and Compatibility Scoring
+- [ ] Stage 5 - Provider Adapter Layer With Mocked Providers
+- [ ] Stage 6 - Real Local Provider Adapters
+- [ ] Stage 7 - Runtime and Model Installation Flow
+- [ ] Stage 8 - Router Auto/Manual/Forced Model Selection
+- [ ] Stage 9 - Notifications and Background Behavior
+- [ ] Stage 10 - Model Update Metadata Checker
+- [ ] Stage 11 - Windows Remote Provider Broker
+- [ ] Stage 12 - Mac Remote Client
+- [ ] Stage 13 - Packaging and Installers
+- [ ] Stage 14 - Final Testing, Documentation, and Polish
+
 Every stage must end with a stop, summary, changed-file list, test results,
 known issues or limitations, and the exact question:
 
@@ -75,7 +138,7 @@ Do not continue automatically. Do not pre-build future stages. Do not create
 placeholder-only future-stage code unless required for compilation and clearly
 marked as a stub.
 
-### Stage 0 - Project Definition and Architecture
+### [x] Stage 0 - Project Definition and Architecture
 
 - Produce the final architecture proposal.
 - Document technology choices, directory structure, data models, provider
@@ -84,7 +147,7 @@ marked as a stub.
 - Do not scaffold the Tauri app or write provider/runtime implementation.
 - Stop and ask for approval.
 
-### Stage 1 - App Shell and Navigation
+### [x] Stage 1 - App Shell and Navigation
 
 - Create the Tauri v2 + React + TypeScript + Vite desktop app shell.
 - Add main navigation pages: Dashboard, Machine Specs, Model Fit Map, Models,

@@ -1,0 +1,23 @@
+{
+  "name": "local-ai-router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first desktop app for routing and managing compatible local AI models across macOS and Windows.",
+  "license": "MIT",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "dev": "npm --workspace apps/desktop run dev",
+    "build": "npm --workspace apps/desktop run build",
+    "preview": "npm --workspace apps/desktop run preview",
+    "tauri:dev": "npm --workspace apps/desktop run tauri:dev",
+    "tauri:build": "npm --workspace apps/desktop run tauri:build",
+    "build:macos": "./scripts/build_macos_app.sh",
+    "build:windows": "npm --workspace apps/desktop run tauri:build -- --bundles msi,nsis",
+    "typecheck": "npm --workspace apps/desktop run typecheck"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
