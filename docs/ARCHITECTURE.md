@@ -18,7 +18,10 @@ The app must support:
 - Windows 10/11 x64, with Ollama and LM Studio preferred and low-VRAM NVIDIA
   systems treated conservatively.
 
-Stage 0 defines the architecture only. It does not create an executable app.
+The repository has since advanced through Stage 14. The architecture still
+captures the intended module boundaries, while the current implementation now
+contains the Tauri desktop shell, Rust command modules, fixtures, release
+scripts, and final documentation.
 
 ## 2. Repository Layout
 
@@ -49,8 +52,11 @@ local-ai-router/
   README.md
 ```
 
-Stage 0 intentionally creates documentation only. The directories above should
-be created when the corresponding implementation stage begins.
+Stage 14 implements this layout for the desktop app, fixtures, docs, and
+scripts. The separate `crates/*` and `packages/ui` extraction remains a future
+refactor option; the current implementation keeps Rust modules inside
+`apps/desktop/src-tauri/src` and UI modules inside `apps/desktop/src` to avoid
+unnecessary workspace churn during the staged build.
 
 ## 3. Technology Choices
 

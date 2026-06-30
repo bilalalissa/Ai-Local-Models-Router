@@ -13,8 +13,11 @@
     "preview": "npm --workspace apps/desktop run preview",
     "tauri:dev": "npm --workspace apps/desktop run tauri:dev",
     "tauri:build": "npm --workspace apps/desktop run tauri:build",
-    "build:macos": "./scripts/build_macos_app.sh",
-    "build:windows": "npm --workspace apps/desktop run tauri:build -- --bundles msi,nsis",
+    "build:macos": "./scripts/build_macos_app.sh host",
+    "build:macos:apple-silicon": "./scripts/build_macos_app.sh apple-silicon",
+    "build:macos:intel": "./scripts/build_macos_app.sh intel",
+    "build:macos:universal": "./scripts/build_macos_app.sh universal",
+    "build:windows": "pwsh -File ./scripts/build_windows_app.ps1 -Target x64",
     "typecheck": "npm --workspace apps/desktop run typecheck"
   },
   "engines": {

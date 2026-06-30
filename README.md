@@ -6,7 +6,8 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 12: Mac remote client. The
+This repository is currently at Stage 14: final testing, documentation, and
+polish. The
 Tauri desktop shell exists, exposes persisted pause/resume state, includes
 native hardware probing and specs export, scores a seeded local model catalog,
 includes local HTTP adapters for Ollama, LM Studio, custom OpenAI-compatible
@@ -29,8 +30,9 @@ pause-policy behavior. Mac remote client mode now has Bonjour/mDNS discovery,
 manual IP:port pairing, paired-device refresh, protected token-vault storage,
 remote specs/models/health/load/latency display, and router integration for
 Remote preferred, Remote only, and overloaded-local fallback. Real
-installers/downloads and release packaging remain intentionally deferred to
-later approved stages.
+installers/downloads remain intentionally dry-run, while release packaging
+scripts and documentation now cover macOS Apple Silicon, macOS Intel, optional
+universal macOS bundles, and Windows x64 installers.
 
 ## Stage Gate Rule
 
@@ -107,6 +109,12 @@ start the next implementation stage until the user explicitly approves it.
   vault, remote health/spec/model/provider-status refresh, remote route
   candidates, routed remote chat test prompts, pause gates, and Remote PCs
   client UI.
+- Stage 13 packaging: release scripts for macOS Apple Silicon, macOS Intel,
+  optional universal macOS, and Windows x64 MSI/NSIS installers, plus signing
+  placeholders and a release checklist.
+- Stage 14 final documentation and verification: user guide, platform guides,
+  provider/model catalog/security/pause/remote docs, final verification plan,
+  loading/empty/error state audit, and known limitations.
 
 ## Planned Stack
 
@@ -148,6 +156,9 @@ Build the macOS desktop bundle from macOS:
 
 ```bash
 npm run build:macos
+npm run build:macos:apple-silicon
+npm run build:macos:intel
+npm run build:macos:universal
 ```
 
 Build the Windows installer from Windows:
@@ -156,7 +167,7 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 12 note: the installer is dry-run only. It records realistic command hooks
+Stage 14 note: the installer is dry-run only. It records realistic command hooks
 and app-managed folder paths, but never executes commands or downloads model
 weights. Router decisions and routed test prompts exist for local providers.
 Remote preferred and remote-only routing can now select paired Windows remote
@@ -165,6 +176,25 @@ metadata calls and real downloads do not exist yet. Stage 11 broker mode include
 a Windows-gated LAN HTTP listener plus command-driven endpoint previews for local
 verification. Stage 12 includes fixture-backed local verification for remote
 client flows; real LAN pairing requires a running Windows broker and token.
+Public distribution additionally requires macOS signing/notarization and Windows
+Authenticode signing outside this repository.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Stage Checklist](docs/STAGE_CHECKLIST.md)
+- [Packaging](docs/PACKAGING.md)
+- [Release Checklist](docs/RELEASE_CHECKLIST.md)
+- [Final Verification](docs/FINAL_VERIFICATION.md)
+- [User Guide](docs/USER_GUIDE.md)
+- [Providers](docs/PROVIDERS.md)
+- [Model Catalog](docs/MODEL_CATALOG.md)
+- [macOS Apple Silicon](docs/MAC_APPLE_SILICON.md)
+- [macOS Intel](docs/MAC_INTEL.md)
+- [Windows](docs/WINDOWS.md)
+- [Remote Pairing](docs/REMOTE_PAIRING.md)
+- [Pause Mode](docs/PAUSE_MODE.md)
+- [Security](docs/SECURITY.md)
 
 ## Visual Baseline
 
@@ -195,8 +225,8 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 10 - Model Update Metadata Checker
 - [x] Stage 11 - Windows Remote Provider Broker
 - [x] Stage 12 - Mac Remote Client
-- [ ] Stage 13 - Packaging and Installers
-- [ ] Stage 14 - Final Testing, Documentation, and Polish
+- [x] Stage 13 - Packaging and Installers
+- [x] Stage 14 - Final Testing, Documentation, and Polish
 
 Every stage must end with a stop, summary, changed-file list, test results,
 known issues or limitations, and the exact question:
@@ -349,7 +379,7 @@ marked as a stub.
 - Store tokens securely and respect pause state.
 - Stop and ask for approval.
 
-### Stage 13 - Packaging and Installers
+### [x] Stage 13 - Packaging and Installers
 
 - Add macOS Apple Silicon build.
 - Add macOS Intel build.
@@ -358,7 +388,7 @@ marked as a stub.
 - Add code-signing placeholders/instructions and release checklist.
 - Stop and ask for approval.
 
-### Stage 14 - Final Testing, Documentation, and Polish
+### [x] Stage 14 - Final Testing, Documentation, and Polish
 
 - Complete full test suite and UI smoke tests.
 - Add loading, empty, and error states.
@@ -368,6 +398,15 @@ marked as a stub.
 - Run final verification checklist.
 - List final known limitations.
 - Stop and ask for final approval.
+
+## Final Known Limitations
+
+- Runtime/model installers are dry-run only and do not download model weights.
+- Update metadata checks use local fixtures only.
+- Public releases require external signing/notarization credentials.
+- Windows MSI/NSIS artifacts must be built and signed on Windows.
+- Remote broker/client mode is designed for trusted LAN use, not internet
+  exposure.
 
 ## Stage 0 Verification
 

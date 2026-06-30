@@ -242,7 +242,7 @@ function fixtureDiscovery(): RemoteDiscoveryResult {
     base_url: "fixture://studio-win11",
     discovered_at_ms: Date.now(),
     latency_ms: 24,
-    message: "Fixture remote broker used for Stage 12 browser preview."
+    message: "Fixture remote broker used for browser preview and local verification."
   };
 }
 

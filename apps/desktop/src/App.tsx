@@ -379,6 +379,8 @@ export default function App() {
             <ModelFitMapPage appState={appState} />
           ) : activePage === "providers" ? (
             <ProvidersPage appState={appState} />
+          ) : activePage === "models" ? (
+            <InstallerPage />
           ) : activePage === "updates" ? (
             <UpdatesPage appState={appState} />
           ) : activePage === "router" ? (
@@ -446,7 +448,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 12 remote client</span>
+          <span>Stage 14 final build</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -1707,8 +1709,8 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
 
           <Panel title="Provider Logs">
             <div className="provider-log-list">
-              {logs.slice(0, 8).map((entry) => (
-                <div className="provider-log-row" key={`${entry.timestamp_ms}-${entry.message}`}>
+              {logs.slice(0, 8).map((entry, index) => (
+                <div className="provider-log-row" key={`${entry.timestamp_ms}-${index}-${entry.message}`}>
                   <span>{formatTimestamp(entry.timestamp_ms)}</span>
                   <strong>{entry.level}</strong>
                   <span>{entry.message}</span>
@@ -2155,7 +2157,7 @@ function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
             />
             <SettingToggle
               checked={snapshot.settings.advertise_mdns}
-              description="Advertise the broker for future Stage 12 discovery."
+              description="Advertise the broker for trusted Mac client discovery."
               label="mDNS advertisement"
               onChange={(checked) => updateSetting("advertise_mdns", checked)}
             />
@@ -2983,8 +2985,8 @@ function InstallerPage() {
 
         <Panel title="Install Logs">
           <div className="provider-log-list">
-            {state.logs.slice(0, 10).map((entry) => (
-              <div className="provider-log-row" key={`${entry.timestamp_ms}-${entry.message}`}>
+            {state.logs.slice(0, 10).map((entry, index) => (
+              <div className="provider-log-row" key={`${entry.timestamp_ms}-${index}-${entry.message}`}>
                 <span>{formatTimestamp(entry.timestamp_ms)}</span>
                 <strong>{entry.level}</strong>
                 <span>{entry.message}</span>

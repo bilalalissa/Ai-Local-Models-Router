@@ -382,7 +382,7 @@ function responseForEndpoint(
             message: {
               role: "assistant",
               content:
-                "Stage 11 broker endpoint accepted the authenticated chat request. Live remote routing is deferred to Stage 12."
+                "Broker endpoint accepted the authenticated chat request. Paired Mac clients can route to this provider when remote routing is enabled."
             },
             finish_reason: "stop"
           }

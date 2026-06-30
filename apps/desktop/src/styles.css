@@ -2085,6 +2085,7 @@ button:disabled {
 
   .data-table {
     display: block;
+    width: auto;
     overflow-x: auto;
     white-space: nowrap;
   }
