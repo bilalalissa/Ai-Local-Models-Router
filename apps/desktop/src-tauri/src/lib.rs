@@ -1,6 +1,7 @@
 mod app_state;
 mod hardware_probe;
 mod model_catalog;
+mod provider_core;
 
 use app_state::{
     state_file_path, AppStateSnapshot, AppStateStore, PauseHistoryEntry, PauseRequest,
@@ -14,6 +15,10 @@ use model_catalog::{
     load_model_catalog, score_model_catalog, CompatibilityResult, ModelEntry,
     ScoreModelCatalogRequest,
 };
+use provider_core::{
+    ProviderChatRequest, ProviderChatResponse, ProviderLogEntry, ProviderManager, ProviderModel,
+    ProviderStatus,
+};
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, Submenu},
@@ -21,6 +26,7 @@ use tauri::{
 };
 
 type SharedAppState = Mutex<AppStateStore>;
+type SharedProviderState = Mutex<ProviderManager>;
 
 #[tauri::command]
 fn get_app_state(app_state: State<'_, SharedAppState>) -> Result<AppStateSnapshot, String> {
@@ -34,12 +40,14 @@ fn get_app_state(app_state: State<'_, SharedAppState>) -> Result<AppStateSnapsho
 fn pause_app(
     app: tauri::AppHandle,
     app_state: State<'_, SharedAppState>,
+    provider_state: State<'_, SharedProviderState>,
     request: PauseRequest,
 ) -> Result<AppStateSnapshot, String> {
     let mut store = app_state
         .lock()
         .map_err(|_| "app state lock poisoned".to_string())?;
     let snapshot = store.pause(request)?;
+    pause_providers(&app, &provider_state, "App paused")?;
     emit_app_state(&app, &snapshot);
     Ok(snapshot)
 }
@@ -48,12 +56,14 @@ fn pause_app(
 fn resume_app(
     app: tauri::AppHandle,
     app_state: State<'_, SharedAppState>,
+    provider_state: State<'_, SharedProviderState>,
     source: PauseSource,
 ) -> Result<AppStateSnapshot, String> {
     let mut store = app_state
         .lock()
         .map_err(|_| "app state lock poisoned".to_string())?;
     let snapshot = store.resume(source)?;
+    resume_providers(&app, &provider_state)?;
     emit_app_state(&app, &snapshot);
     Ok(snapshot)
 }
@@ -115,6 +125,134 @@ fn score_models(request: ScoreModelCatalogRequest) -> Result<Vec<CompatibilityRe
     score_model_catalog(request)
 }
 
+#[tauri::command]
+fn list_provider_statuses(
+    provider_state: State<'_, SharedProviderState>,
+) -> Result<Vec<ProviderStatus>, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    Ok(providers.statuses())
+}
+
+#[tauri::command]
+fn refresh_provider_health(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+) -> Result<Vec<ProviderStatus>, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let statuses = providers.statuses();
+    emit_provider_statuses(&app, &statuses);
+    Ok(statuses)
+}
+
+#[tauri::command]
+fn start_provider(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+) -> Result<ProviderStatus, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let status = providers.start(&provider_id)?;
+    emit_provider_status(&app, &status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn stop_provider(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+) -> Result<ProviderStatus, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let status = providers.stop(&provider_id)?;
+    emit_provider_status(&app, &status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn pause_provider_tasks(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+    reason: String,
+) -> Result<ProviderStatus, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let status = providers.pause(&provider_id, &reason)?;
+    emit_provider_status(&app, &status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn resume_provider_tasks(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+) -> Result<ProviderStatus, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let status = providers.resume(&provider_id)?;
+    emit_provider_status(&app, &status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn list_provider_models(
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+) -> Result<Vec<ProviderModel>, String> {
+    let providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    providers.list_models(&provider_id)
+}
+
+#[tauri::command]
+fn send_provider_test_chat(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    request: ProviderChatRequest,
+) -> Result<ProviderChatResponse, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let response = providers.chat(request)?;
+    let logs = providers.logs(Some(&response.provider_id));
+    let _ = app.emit("log-appended", logs.first());
+    Ok(response)
+}
+
+#[tauri::command]
+fn get_provider_logs(
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: Option<String>,
+) -> Result<Vec<ProviderLogEntry>, String> {
+    let providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    Ok(providers.logs(provider_id.as_deref()))
+}
+
+#[tauri::command]
+fn get_provider_folder(
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+) -> Result<String, String> {
+    let providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    providers.folder(&provider_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -125,6 +263,7 @@ pub fn run() {
                 .map_err(|err| format!("failed to resolve app data directory: {err}"))?;
             let store = AppStateStore::load(state_file_path(&app_data_dir))?;
             app.manage(Mutex::new(store));
+            app.manage(Mutex::new(ProviderManager::seeded()));
             install_pause_menu(app.handle())?;
             Ok(())
         })
@@ -139,7 +278,17 @@ pub fn run() {
             load_hardware_fixture,
             export_hardware_specs,
             get_model_catalog,
-            score_models
+            score_models,
+            list_provider_statuses,
+            refresh_provider_health,
+            start_provider,
+            stop_provider,
+            pause_provider_tasks,
+            resume_provider_tasks,
+            list_provider_models,
+            send_provider_test_chat,
+            get_provider_logs,
+            get_provider_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local AI Router desktop shell");
@@ -148,6 +297,41 @@ pub fn run() {
 fn emit_app_state(app: &tauri::AppHandle, snapshot: &AppStateSnapshot) {
     let _ = app.emit("app-state-changed", snapshot);
     let _ = app.emit("log-appended", snapshot.pause_history.last());
+}
+
+fn emit_provider_status(app: &tauri::AppHandle, status: &ProviderStatus) {
+    let _ = app.emit("provider-health-changed", status);
+}
+
+fn emit_provider_statuses(app: &tauri::AppHandle, statuses: &[ProviderStatus]) {
+    for status in statuses {
+        emit_provider_status(app, status);
+    }
+}
+
+fn pause_providers(
+    app: &tauri::AppHandle,
+    provider_state: &State<'_, SharedProviderState>,
+    reason: &str,
+) -> Result<(), String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let statuses = providers.pause_all(reason);
+    emit_provider_statuses(app, &statuses);
+    Ok(())
+}
+
+fn resume_providers(
+    app: &tauri::AppHandle,
+    provider_state: &State<'_, SharedProviderState>,
+) -> Result<(), String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let statuses = providers.resume_all();
+    emit_provider_statuses(app, &statuses);
+    Ok(())
 }
 
 fn install_pause_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
@@ -181,6 +365,12 @@ fn install_pause_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
                     }
                 }
             }
+            if let Some(provider_state) = app.try_state::<SharedProviderState>() {
+                if let Ok(mut providers) = provider_state.lock() {
+                    let statuses = providers.pause_all("Native menu pause");
+                    emit_provider_statuses(app, &statuses);
+                }
+            }
         }
         "resume_now" => {
             if let Some(state) = app.try_state::<SharedAppState>() {
@@ -188,6 +378,12 @@ fn install_pause_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
                     if let Ok(snapshot) = store.resume(PauseSource::Tray) {
                         emit_app_state(app, &snapshot);
                     }
+                }
+            }
+            if let Some(provider_state) = app.try_state::<SharedProviderState>() {
+                if let Ok(mut providers) = provider_state.lock() {
+                    let statuses = providers.resume_all();
+                    emit_provider_statuses(app, &statuses);
                 }
             }
         }

@@ -57,6 +57,25 @@ import {
   scoreModels,
   useCaseOptions
 } from "./modelCatalog";
+import {
+  type ProviderChatResponse,
+  type ProviderLogEntry,
+  type ProviderModel,
+  type ProviderStatus,
+  getProviderFolder,
+  getProviderLogs,
+  listProviderModels,
+  listProviderStatuses,
+  pauseAllProviders,
+  pauseProviderTasks,
+  refreshProviderHealth,
+  resumeAllProviders,
+  resumeProviderTasks,
+  sendProviderTestChat,
+  startProvider,
+  stopProvider,
+  subscribeProviderHealth
+} from "./providers";
 
 type PageId =
   | "dashboard"
@@ -103,7 +122,7 @@ const navItems: NavItem[] = [
 ];
 
 const pageContent: Record<
-  Exclude<PageId, "dashboard" | "machine-specs" | "model-fit-map" | "router" | "settings" | "logs">,
+  Exclude<PageId, "dashboard" | "machine-specs" | "model-fit-map" | "providers" | "router" | "settings" | "logs">,
   EmptyPage
 > = {
   models: {
@@ -112,13 +131,6 @@ const pageContent: Record<
     summary:
       "Install, uninstall, force, and switch model actions are intentionally inactive until later stages.",
     readiness: ["Installed model list", "Detail pane", "Manual action area"]
-  },
-  providers: {
-    title: "Providers",
-    eyebrow: "Stage 1 page shell",
-    summary:
-      "Provider cards are present as a visual shell; real adapters begin with mock providers in Stage 5.",
-    readiness: ["MLX-LM card", "Ollama card", "LM Studio card", "Custom endpoint card"]
   },
   "remote-pcs": {
     title: "Remote PCs",
@@ -269,6 +281,8 @@ export default function App() {
             <MachineSpecsPage />
           ) : activePage === "model-fit-map" ? (
             <ModelFitMapPage appState={appState} />
+          ) : activePage === "providers" ? (
+            <ProvidersPage appState={appState} />
           ) : activePage === "router" ? (
             <RouterShell appState={appState} onPause={handlePause} onResume={handleResume} />
           ) : activePage === "settings" ? (
@@ -332,7 +346,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 4 model fit</span>
+          <span>Stage 5 providers</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -1130,6 +1144,330 @@ function ModelFitMapPage({ appState }: { appState: AppStateSnapshot }) {
   );
 }
 
+function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
+  const [statuses, setStatuses] = useState<ProviderStatus[]>([]);
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const [models, setModels] = useState<ProviderModel[]>([]);
+  const [logs, setLogs] = useState<ProviderLogEntry[]>([]);
+  const [folder, setFolder] = useState("");
+  const [prompt, setPrompt] = useState("Say hello from the mock provider.");
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [chatResponse, setChatResponse] = useState<ProviderChatResponse | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Loading mock providers...");
+  const [error, setError] = useState<string | null>(null);
+  const appPaused = appState.lifecycle_state === "Paused";
+
+  useEffect(() => {
+    let ignore = false;
+    let unlisten: (() => void) | undefined;
+    listProviderStatuses()
+      .then((nextStatuses) => {
+        if (ignore) return;
+        setStatuses(nextStatuses);
+        setSelectedProviderId((current) => current ?? nextStatuses[0]?.definition.id ?? null);
+        setStatusMessage(`${nextStatuses.length} mock providers loaded.`);
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatusMessage("Provider status load failed.");
+      });
+
+    subscribeProviderHealth((status) => {
+      setStatuses((current) => upsertProviderStatus(current, status));
+    }).then((unsubscribe) => {
+      unlisten = unsubscribe;
+      if (ignore) {
+        unsubscribe();
+      }
+    });
+
+    return () => {
+      ignore = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedProviderId) return;
+    let ignore = false;
+    Promise.all([
+      listProviderModels(selectedProviderId),
+      getProviderLogs(selectedProviderId),
+      getProviderFolder(selectedProviderId)
+    ])
+      .then(([nextModels, nextLogs, nextFolder]) => {
+        if (ignore) return;
+        setModels(nextModels);
+        setLogs(nextLogs);
+        setFolder(nextFolder);
+        setSelectedModelId((current) => current ?? nextModels[0]?.id ?? null);
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [selectedProviderId, statuses]);
+
+  useEffect(() => {
+    if (statuses.length === 0) return;
+    const update = appPaused
+      ? pauseAllProviders("App paused")
+      : resumeAllProviders();
+    update
+      .then((nextStatuses) => {
+        setStatuses(nextStatuses);
+        setStatusMessage(appPaused ? "Provider tasks paused by app state." : "Provider tasks resumed by app state.");
+      })
+      .catch(() => undefined);
+  }, [appPaused, statuses.length]);
+
+  const selectedStatus = useMemo(
+    () => statuses.find((status) => status.definition.id === selectedProviderId) ?? statuses[0] ?? null,
+    [statuses, selectedProviderId]
+  );
+
+  const updateOneStatus = useCallback((status: ProviderStatus) => {
+    setStatuses((current) => upsertProviderStatus(current, status));
+    setSelectedProviderId(status.definition.id);
+    setStatusMessage(status.message);
+  }, []);
+
+  const handleRefresh = useCallback(async () => {
+    setError(null);
+    const nextStatuses = await refreshProviderHealth();
+    setStatuses(nextStatuses);
+    setStatusMessage("Provider health simulation refreshed.");
+  }, []);
+
+  const handleStartStop = useCallback(async () => {
+    if (!selectedStatus) return;
+    setError(null);
+    const nextStatus = selectedStatus.running
+      ? await stopProvider(selectedStatus.definition.id)
+      : await startProvider(selectedStatus.definition.id);
+    updateOneStatus(nextStatus);
+  }, [selectedStatus, updateOneStatus]);
+
+  const handlePauseResume = useCallback(async () => {
+    if (!selectedStatus) return;
+    setError(null);
+    const shouldResume = selectedStatus.paused;
+    const nextStatus = selectedStatus.paused
+      ? await resumeProviderTasks(selectedStatus.definition.id)
+      : await pauseProviderTasks(selectedStatus.definition.id, "Manual provider pause");
+    updateOneStatus(nextStatus);
+    setStatusMessage(shouldResume ? "Provider tasks resumed." : "Provider tasks paused.");
+  }, [selectedStatus, updateOneStatus]);
+
+  const handleTestChat = useCallback(async () => {
+    if (!selectedStatus) return;
+    setError(null);
+    setChatResponse(null);
+    try {
+      const response = await sendProviderTestChat({
+        provider_id: selectedStatus.definition.id,
+        model_id: selectedModelId,
+        prompt
+      });
+      setChatResponse(response);
+      setLogs(await getProviderLogs(selectedStatus.definition.id));
+      setStatusMessage("Mock test chat completed.");
+    } catch (err) {
+      setError(errorMessage(err));
+      setLogs(await getProviderLogs(selectedStatus.definition.id));
+      setStatusMessage("Mock test chat rejected.");
+    }
+  }, [prompt, selectedModelId, selectedStatus]);
+
+  if (statuses.length === 0) {
+    return (
+      <div className="providers-page">
+        <Panel title="Providers">
+          <div className="loading-state">
+            <Cloud size={22} />
+            <strong>{statusMessage}</strong>
+            {error ? <span>{error}</span> : <span>Preparing mocked provider adapters.</span>}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  return (
+    <div className="providers-page">
+      <Panel title="Mock Provider Adapters">
+        <div className="provider-toolbar">
+          <div className="hardware-title">
+            <Cloud size={24} />
+            <div>
+              <strong>{selectedStatus?.definition.name ?? "Mock providers"}</strong>
+              <span>{statusMessage}</span>
+            </div>
+          </div>
+          <button className="secondary-button" onClick={handleRefresh} type="button">
+            <RefreshCw size={16} />
+            Refresh health
+          </button>
+          <span className={appPaused ? "fit-pill tight" : "fit-pill smooth"}>
+            {appPaused ? "App paused" : "App running"}
+          </span>
+        </div>
+        {error ? <div className="inline-error">{error}</div> : null}
+      </Panel>
+
+      <div className="provider-card-grid">
+        {statuses.map((status) => (
+          <button
+            className={
+              selectedStatus?.definition.id === status.definition.id
+                ? "provider-card active"
+                : "provider-card"
+            }
+            key={status.definition.id}
+            onClick={() => {
+              setSelectedProviderId(status.definition.id);
+              setSelectedModelId(null);
+              setChatResponse(null);
+              setError(null);
+            }}
+            type="button"
+          >
+            <div className="provider-card-heading">
+              <strong>{status.definition.name}</strong>
+              <span className={`health-pill ${status.health.toLowerCase()}`}>
+                {status.health}
+              </span>
+            </div>
+            <span>{status.definition.kind}</span>
+            <span>{status.definition.base_url}</span>
+            <div className="provider-card-meta">
+              <span>{status.model_count} models</span>
+              <span>{status.latency_ms ? `${status.latency_ms} ms` : "No latency"}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {selectedStatus ? (
+        <div className="provider-detail-grid">
+          <Panel title="Provider Status">
+            <SpecRows
+              rows={[
+                ["Health", selectedStatus.health],
+                ["Running", selectedStatus.running ? "Yes" : "No"],
+                ["Paused", selectedStatus.paused ? "Yes" : "No"],
+                ["Active Model", selectedStatus.active_model ?? "None"],
+                ["Latency", selectedStatus.latency_ms ? `${selectedStatus.latency_ms} ms` : "Not available"],
+                ["Folder", folder]
+              ]}
+            />
+            <div className="provider-actions">
+              <button className="secondary-button" onClick={handleStartStop} type="button">
+                {selectedStatus.running ? "Stop provider" : "Start provider"}
+              </button>
+              <button
+                className={selectedStatus.paused ? "resume-button" : "secondary-button"}
+                disabled={!selectedStatus.running}
+                onClick={handlePauseResume}
+                type="button"
+              >
+                {selectedStatus.paused ? "Resume tasks" : "Pause tasks"}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel title="Model Listing">
+            <table className="data-table provider-model-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Format</th>
+                  <th>Size</th>
+                  <th>Installed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {models.map((model) => (
+                  <tr
+                    className={selectedModelId === model.id ? "selected-row" : ""}
+                    key={model.id}
+                    onClick={() => setSelectedModelId(model.id)}
+                  >
+                    <td>{model.display_name}</td>
+                    <td>{model.format}</td>
+                    <td>{formatBytesGb(model.size_bytes)}</td>
+                    <td>{model.installed ? "Yes" : "No"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Panel>
+
+          <Panel title="Mock Test Chat" className="provider-chat-panel">
+            <div className="provider-chat-form">
+              <select
+                aria-label="Provider test model"
+                onChange={(event) => setSelectedModelId(event.target.value)}
+                value={selectedModelId ?? models[0]?.id ?? ""}
+              >
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.display_name}
+                  </option>
+                ))}
+              </select>
+              <textarea
+                aria-label="Provider test prompt"
+                onChange={(event) => setPrompt(event.target.value)}
+                value={prompt}
+              />
+              <button
+                className="secondary-button"
+                disabled={!selectedStatus.running || selectedStatus.paused}
+                onClick={handleTestChat}
+                type="button"
+              >
+                <MessageSquare size={16} />
+                Send mock chat
+              </button>
+            </div>
+            {chatResponse ? (
+              <div className="chat-response">
+                <strong>Response</strong>
+                <span>{chatResponse.response}</span>
+                <small>
+                  {chatResponse.tokens_in} in / {chatResponse.tokens_out} out / {chatResponse.latency_ms} ms
+                </small>
+              </div>
+            ) : (
+              <p className="fine-print">
+                Mock chat is blocked when the provider is stopped or tasks are paused.
+              </p>
+            )}
+          </Panel>
+
+          <Panel title="Provider Logs">
+            <div className="provider-log-list">
+              {logs.slice(0, 8).map((entry) => (
+                <div className="provider-log-row" key={`${entry.timestamp_ms}-${entry.message}`}>
+                  <span>{formatTimestamp(entry.timestamp_ms)}</span>
+                  <strong>{entry.level}</strong>
+                  <span>{entry.message}</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function RouterShell({
   appState,
   onPause,
@@ -1678,4 +2016,14 @@ function scoreInputLabel(name: string): string {
     pause_state: "Pause state"
   };
   return labels[name] ?? name;
+}
+
+function upsertProviderStatus(statuses: ProviderStatus[], nextStatus: ProviderStatus): ProviderStatus[] {
+  const exists = statuses.some((status) => status.definition.id === nextStatus.definition.id);
+  if (!exists) {
+    return [...statuses, nextStatus];
+  }
+  return statuses.map((status) =>
+    status.definition.id === nextStatus.definition.id ? nextStatus : status
+  );
 }

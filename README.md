@@ -6,12 +6,14 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 4: model catalog and compatibility
-scoring. The Tauri desktop shell exists, exposes persisted pause/resume state,
-includes native hardware probing and specs export, and now scores a seeded local
-model catalog against live or fixture hardware profiles. Providers, model
-routing execution, installers, remote broker behavior, and model/update
-automation are intentionally deferred to later approved stages.
+This repository is currently at Stage 5: provider adapter layer with mocked
+providers. The Tauri desktop shell exists, exposes persisted pause/resume state,
+includes native hardware probing and specs export, scores a seeded local model
+catalog, and now includes a mock provider adapter layer with provider cards,
+health simulation, model listing, mock chat, logs, and pause/resume task hooks.
+Real provider integrations, model routing execution, installers, remote broker
+behavior, and model/update automation are intentionally deferred to later
+approved stages.
 
 ## Stage Gate Rule
 
@@ -56,6 +58,10 @@ start the next implementation stage until the user explicitly approves it.
   catalog, Smooth/Good/Tight/Avoid scoring labels, required scoring inputs,
   and Model Fit Map UI with hardware, use case, provider, preference, installed,
   and pause-state filters.
+- Stage 5 provider mocks: Rust `provider_core` trait/capability model, seeded
+  mock providers, provider health simulation, model listing, mock chat, logs,
+  provider folder access, and provider pause/resume task hooks wired to app
+  pause state.
 
 ## Planned Stack
 
@@ -105,10 +111,10 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 4 note: compatibility scoring is real and fixture-tested, but provider
-execution, model downloads, router decisions, updater checks, notifications,
-and remote broker workers do not exist yet. Live hardware load values remain
-conservative placeholders until background telemetry is added in Stage 9.
+Stage 5 note: providers are mocked and fixture-driven. Real Ollama, LM Studio,
+MLX-LM, custom OpenAI-compatible, and llama.cpp process integration starts in
+Stage 6. Model downloads, router decisions, updater checks, notifications, and
+remote broker workers do not exist yet.
 
 ## Visual Baseline
 
@@ -131,7 +137,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 2 - App State and Pause/Resume Core
 - [x] Stage 3 - Hardware Detection and Specs Export
 - [x] Stage 4 - Model Catalog and Compatibility Scoring
-- [ ] Stage 5 - Provider Adapter Layer With Mocked Providers
+- [x] Stage 5 - Provider Adapter Layer With Mocked Providers
 - [ ] Stage 6 - Real Local Provider Adapters
 - [ ] Stage 7 - Runtime and Model Installation Flow
 - [ ] Stage 8 - Router Auto/Manual/Forced Model Selection
@@ -203,7 +209,7 @@ marked as a stub.
 - Test the required hardware profiles.
 - Stop and ask for approval.
 
-### Stage 5 - Provider Adapter Layer With Mocked Providers
+### [x] Stage 5 - Provider Adapter Layer With Mocked Providers
 
 - Implement `provider_core`.
 - Define the shared provider trait and capability model.
