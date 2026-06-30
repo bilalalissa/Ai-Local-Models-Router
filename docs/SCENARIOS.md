@@ -69,7 +69,8 @@ Common problems and fixes:
 
 Goal: preview what a future live setup would do without downloading anything.
 
-Before you start: understand this is dry-run only.
+Before you start: understand this is dry-run only. For the full distinction,
+read [Regular vs Dry-Run Methods](REGULAR_VS_DRY_RUN.md).
 
 Steps:
 

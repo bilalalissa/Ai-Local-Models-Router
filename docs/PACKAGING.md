@@ -67,3 +67,12 @@ Windows release signing requires:
 - MSI and NSIS signature verification on a clean Windows machine.
 
 Unsigned artifacts are suitable for local verification only.
+
+## Packaging vs Dry-Run Installers
+
+Packaging commands are regular build commands: they compile the app and create
+local app/installer artifacts.
+
+The in-app **Models** installer flow is different. It is dry-run only: it shows
+runtime/model setup commands and folders but does not execute those commands or
+download model weights.

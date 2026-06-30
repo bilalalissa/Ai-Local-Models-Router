@@ -1,7 +1,8 @@
 # User Guide
 
 This guide is organized by task. For end-to-end examples, read
-[Scenario Walkthroughs](SCENARIOS.md).
+[Scenario Walkthroughs](SCENARIOS.md). For setup behavior, read
+[Regular vs Dry-Run Methods](REGULAR_VS_DRY_RUN.md).
 
 ## First Launch
 
@@ -86,6 +87,11 @@ start controls where available.
 
 Expected result: commands and logs are shown, but no runtime or model weights
 are downloaded.
+
+Dry-run means the app previews the setup plan without changing package managers,
+installing runtimes, or downloading model weights. Regular/live provider checks
+are different: they contact providers you already installed and started outside
+the app.
 
 ## Route A Test Prompt
 

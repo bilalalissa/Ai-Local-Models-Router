@@ -30,6 +30,9 @@ Current limitations:
 - Remote broker/client mode is intended for trusted LAN use, not internet
   exposure.
 
+For a plain-language explanation, see
+[Regular vs Dry-Run Methods](docs/REGULAR_VS_DRY_RUN.md).
+
 ## Platform Setup
 
 Start with the guide for your machine:
@@ -128,6 +131,7 @@ For remote routing:
 
 - [User Guide](docs/USER_GUIDE.md): task-based guide with annotated screenshots.
 - [Scenario Walkthroughs](docs/SCENARIOS.md): end-to-end setup and troubleshooting flows.
+- [Regular vs Dry-Run Methods](docs/REGULAR_VS_DRY_RUN.md): what changes your machine and what only previews work.
 - [Providers](docs/PROVIDERS.md): provider expectations and limitations.
 - [Model Catalog](docs/MODEL_CATALOG.md): how compatibility labels work.
 - [Pause Mode](docs/PAUSE_MODE.md): what pause/resume affects.

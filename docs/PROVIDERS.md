@@ -27,3 +27,10 @@ Each provider reports:
 Stage 14 remains conservative: real model downloads are not performed by tests,
 and installer execution remains dry-run unless a later release explicitly adds
 live downloads.
+
+For users, the practical difference is:
+
+- Provider health checks, model listing, and test chat are regular/live actions
+  against providers you already run.
+- Recommended setup/install flows are dry-run actions that preview commands and
+  folders without installing runtimes or downloading model weights.
