@@ -187,6 +187,12 @@ button {
   background: #f4f7fb;
 }
 
+.icon-button.has-notification {
+  border-color: #b7d8ff;
+  background: #eef6ff;
+  color: var(--blue);
+}
+
 .state-pill,
 .provider-summary,
 .pause-button,
@@ -1096,6 +1102,31 @@ button:disabled {
   align-content: start;
 }
 
+.background-settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.background-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.inline-text-error {
+  color: #b93725;
+}
+
+.background-task-table {
+  margin-top: 14px;
+}
+
 .empty-log-state {
   display: grid;
   gap: 10px;
@@ -1213,6 +1244,30 @@ button:disabled {
   border: 1px solid #eda722;
   background: #fff8ec;
   color: #8a5607;
+}
+
+.health-pill.idle {
+  border: 1px solid var(--line);
+  background: #f8fafc;
+  color: var(--muted);
+}
+
+.health-pill.running {
+  border: 1px solid #b7dfc1;
+  background: #e9f8ed;
+  color: #22723b;
+}
+
+.health-pill.suspended {
+  border: 1px solid #eda722;
+  background: #fff8ec;
+  color: #8a5607;
+}
+
+.health-pill.failed {
+  border: 1px solid #f0b7ad;
+  background: #fff0ed;
+  color: #b93725;
 }
 
 .provider-detail-grid {
@@ -1685,6 +1740,7 @@ button:disabled {
   .provider-card-grid,
   .provider-detail-grid,
   .settings-grid,
+  .background-settings-grid,
   .empty-grid,
   .hardware-toolbar,
   .fit-toolbar,

@@ -6,7 +6,7 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 8: router model selection. The
+This repository is currently at Stage 9: notifications and background behavior. The
 Tauri desktop shell exists, exposes persisted pause/resume state, includes
 native hardware probing and specs export, scores a seeded local model catalog,
 includes local HTTP adapters for Ollama, LM Studio, custom OpenAI-compatible
@@ -15,9 +15,12 @@ installer with consent, command hook previews, app-managed folders, progress,
 logs, pause, resume, and cancel. Router decisions now support Auto, Manual,
 Forced, Local only, Remote preferred placeholder, Remote only placeholder, and
 Paused modes with thresholds, fallback chains, decision reasons, and a routed
-test prompt panel. Real installers/downloads, remote broker behavior,
-notifications, and model/update automation are intentionally deferred to later
-approved stages.
+test prompt panel. Notifications and background behavior now include a native
+menu/tray path, notification settings, launch-at-login/start-provider-at-login
+settings, a pause-aware background task manager, notification event history, and
+events for pause/resume, install completion, router changes, provider errors,
+and forced-model pressure. Real installers/downloads, remote broker behavior,
+and model/update automation are intentionally deferred to later approved stages.
 
 ## Stage Gate Rule
 
@@ -77,6 +80,10 @@ start the next implementation stage until the user explicitly approves it.
   preferred/Remote only/Paused modes, compatibility thresholds, fallback and
   degrade/upgrade reasons, routed test prompt execution for local providers, and
   Router page controls.
+- Stage 9 notifications and background behavior: Rust `background_core`,
+  persisted notification/background/autostart settings, native menu/tray setup,
+  notification events, frontend desktop notification bridge, pause-aware
+  background task table, Settings controls, and notification logs.
 
 ## Planned Stack
 
@@ -126,11 +133,12 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 8 note: the installer is dry-run only. It records realistic command hooks
+Stage 9 note: the installer is dry-run only. It records realistic command hooks
 and app-managed folder paths, but never executes commands or downloads model
 weights. Router decisions and routed test prompts exist for local providers.
 Remote preferred and remote-only routing remain explicit placeholders until the
-remote broker/client stages. Updater checks, notifications, and remote broker
+remote broker/client stages. Stage 9 adds notification and background task
+plumbing; Stage 10 updater metadata checks and Stages 11-12 remote broker/client
 workers do not exist yet.
 
 ## Visual Baseline
@@ -158,7 +166,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 6 - Real Local Provider Adapters
 - [x] Stage 7 - Runtime and Model Installation Flow
 - [x] Stage 8 - Router Auto/Manual/Forced Model Selection
-- [ ] Stage 9 - Notifications and Background Behavior
+- [x] Stage 9 - Notifications and Background Behavior
 - [ ] Stage 10 - Model Update Metadata Checker
 - [ ] Stage 11 - Windows Remote Provider Broker
 - [ ] Stage 12 - Mac Remote Client
@@ -267,7 +275,7 @@ marked as a stub.
 - Test routing decisions, thresholds, fallback behavior, and pause behavior.
 - Stop and ask for approval.
 
-### Stage 9 - Notifications and Background Behavior
+### [x] Stage 9 - Notifications and Background Behavior
 
 - Add native notifications.
 - Add notification settings.

@@ -74,7 +74,7 @@ export const defaultRouterThresholds: RouterThresholds = {
 };
 
 export async function decideRouterRoute(request: RouterDecisionRequest): Promise<RouterDecision> {
-  if (isTauriRuntime()) return invoke<RouterDecision>("decide_router_route", { request });
+  if (isTauriRuntime()) return invoke<RouterDecision>("decide_router_route_with_background", { request });
   return fallbackDecision(request);
 }
 

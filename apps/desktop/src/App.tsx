@@ -38,6 +38,18 @@ import {
   updatePauseSettings
 } from "./appState";
 import {
+  type BackgroundSettings,
+  type BackgroundSnapshot,
+  type NotificationEvent,
+  getBackgroundSnapshot,
+  presentNativeNotification,
+  runBackgroundTick,
+  sendTestNotification,
+  subscribeBackgroundSnapshot,
+  subscribeNotificationEvents,
+  updateBackgroundSettings
+} from "./background";
+import {
   type HardwareExportFormat,
   type HardwareFixtureSummary,
   type HardwareSpecs,
@@ -226,6 +238,7 @@ const initialAppState: AppStateSnapshot = {
 export default function App() {
   const [activePage, setActivePage] = useState<PageId>(() => pageFromHash());
   const [appState, setAppState] = useState<AppStateSnapshot>(initialAppState);
+  const [latestNotification, setLatestNotification] = useState<NotificationEvent | null>(null);
   const activeLabel = useMemo(
     () => navItems.find((item) => item.id === activePage)?.label ?? "Dashboard",
     [activePage]
@@ -241,6 +254,7 @@ export default function App() {
   useEffect(() => {
     let ignore = false;
     let unlisten: (() => void) | undefined;
+    let unlistenNotifications: (() => void) | undefined;
 
     getAppState()
       .then((snapshot) => {
@@ -257,10 +271,17 @@ export default function App() {
     subscribeAppState((snapshot) => setAppState(snapshot)).then((unsubscribe) => {
       unlisten = unsubscribe;
     });
+    subscribeNotificationEvents((event) => {
+      setLatestNotification(event);
+      presentNativeNotification(event).catch(() => undefined);
+    }).then((unsubscribe) => {
+      unlistenNotifications = unsubscribe;
+    });
 
     return () => {
       ignore = true;
       unlisten?.();
+      unlistenNotifications?.();
     };
   }, []);
 
@@ -293,6 +314,7 @@ export default function App() {
         <TopBar
           appState={appState}
           activeLabel={activeLabel}
+          latestNotification={latestNotification}
           onPause={() => handlePause(topBarSource(activePage))}
           onResume={() => handleResume(topBarSource(activePage))}
         />
@@ -328,7 +350,7 @@ export default function App() {
               onSettingsChange={handleSettingsChange}
             />
           ) : activePage === "logs" ? (
-            <LogsPage appState={appState} />
+            <LogsPage appState={appState} latestNotification={latestNotification} />
           ) : (
             <EmptyStatePage page={pageContent[activePage]} />
           )}
@@ -381,7 +403,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 8 router</span>
+          <span>Stage 9 background</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -392,11 +414,13 @@ function Sidebar({
 function TopBar({
   appState,
   activeLabel,
+  latestNotification,
   onPause,
   onResume
 }: {
   appState: AppStateSnapshot;
   activeLabel: string;
+  latestNotification: NotificationEvent | null;
   onPause: () => void;
   onResume: () => void;
 }) {
@@ -434,7 +458,12 @@ function TopBar({
         <button className="icon-button" aria-label="Activity" type="button">
           <Activity size={20} />
         </button>
-        <button className="icon-button" aria-label="Notifications" type="button">
+        <button
+          className={`icon-button ${latestNotification ? "has-notification" : ""}`}
+          aria-label={latestNotification ? `Notifications: ${latestNotification.title}` : "Notifications"}
+          title={latestNotification?.title ?? "Notifications"}
+          type="button"
+        >
           <Bell size={19} />
         </button>
       </div>
@@ -819,8 +848,8 @@ function MachineSpecsPage() {
             />
           </div>
           <p className="fine-print">
-            Live Stage 3 load values are conservative placeholders until background telemetry is
-            added in Stage 9.
+            Live load values remain conservative until a later telemetry pass replaces the
+            placeholder probe inputs.
           </p>
         </Panel>
 
@@ -2289,15 +2318,290 @@ function SettingsPage({
           <StatusLine label="Suspended tasks" value={String(totalSuspended(appState))} />
         </div>
       </Panel>
+
+      <BackgroundControlCenter appState={appState} />
     </div>
   );
 }
 
-function LogsPage({ appState }: { appState: AppStateSnapshot }) {
+function BackgroundControlCenter({ appState }: { appState: AppStateSnapshot }) {
+  const [snapshot, setSnapshot] = useState<BackgroundSnapshot | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Loading background controls...");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    let unlisten: (() => void) | undefined;
+    getBackgroundSnapshot()
+      .then((nextSnapshot) => {
+        if (ignore) return;
+        setSnapshot(nextSnapshot);
+        setStatusMessage("Background controls loaded.");
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatusMessage("Background controls failed to load.");
+      });
+    subscribeBackgroundSnapshot((nextSnapshot) => setSnapshot(nextSnapshot)).then((unsubscribe) => {
+      unlisten = unsubscribe;
+      if (ignore) unsubscribe();
+    });
+    return () => {
+      ignore = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const updateSetting = useCallback(
+    async (key: keyof BackgroundSettings, value: boolean) => {
+      if (!snapshot) return;
+      setError(null);
+      try {
+        const nextSnapshot = await updateBackgroundSettings({
+          ...snapshot.settings,
+          [key]: value
+        });
+        setSnapshot(nextSnapshot);
+        setStatusMessage("Background settings saved.");
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Background settings failed to save.");
+      }
+    },
+    [snapshot]
+  );
+
+  const handleTick = useCallback(async () => {
+    setError(null);
+    try {
+      const nextSnapshot = await runBackgroundTick();
+      setSnapshot(nextSnapshot);
+      setStatusMessage("Background task check completed.");
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Background task check failed.");
+    }
+  }, []);
+
+  const handleTestNotification = useCallback(async () => {
+    setError(null);
+    try {
+      const event = await sendTestNotification();
+      await presentNativeNotification(event);
+      const nextSnapshot = await getBackgroundSnapshot();
+      setSnapshot(nextSnapshot);
+      setStatusMessage("Test notification queued.");
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Test notification failed.");
+    }
+  }, []);
+
+  if (!snapshot) {
+    return (
+      <Panel title="Notifications & Background" className="settings-wide">
+        <div className="loading-state">
+          <Bell size={22} />
+          <strong>{statusMessage}</strong>
+          {error ? <span>{error}</span> : <span>Preparing notification and background task settings.</span>}
+        </div>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel title="Notifications & Background" className="settings-wide">
+      <div className="background-settings-grid">
+        <div className="settings-list">
+          <SettingToggle
+            checked={snapshot.settings.native_notifications_enabled}
+            description="Use the desktop notification bridge for eligible events."
+            label="Native notifications"
+            onChange={(checked) => updateSetting("native_notifications_enabled", checked)}
+          />
+          <SettingToggle
+            checked={snapshot.settings.notify_provider_crash}
+            description="Notify when a provider health check reports an error."
+            label="Provider crash alerts"
+            onChange={(checked) => updateSetting("notify_provider_crash", checked)}
+          />
+          <SettingToggle
+            checked={snapshot.settings.notify_model_install_complete}
+            description="Notify when a runtime or model install flow completes."
+            label="Install completion alerts"
+            onChange={(checked) => updateSetting("notify_model_install_complete", checked)}
+          />
+          <SettingToggle
+            checked={snapshot.settings.notify_router_changes}
+            description="Notify when the router degrades or upgrades its route."
+            label="Router change alerts"
+            onChange={(checked) => updateSetting("notify_router_changes", checked)}
+          />
+          <SettingToggle
+            checked={snapshot.settings.notify_forced_model_pressure}
+            description="Warn when forced mode is above configured memory thresholds."
+            label="Forced-model pressure alerts"
+            onChange={(checked) => updateSetting("notify_forced_model_pressure", checked)}
+          />
+        </div>
+
+        <div className="settings-list">
+          <SettingToggle
+            checked={snapshot.settings.tray_menu_enabled}
+            description={snapshot.tray_available ? "Native tray/menu controls are installed." : "Menu controls are installed; tray icon depends on OS support."}
+            label="Tray/menu mode"
+            onChange={(checked) => updateSetting("tray_menu_enabled", checked)}
+          />
+          <SettingToggle
+            checked={snapshot.settings.launch_at_login_enabled}
+            description={`Autostart status: ${snapshot.autostart_status}`}
+            label="Launch at login"
+            onChange={(checked) => updateSetting("launch_at_login_enabled", checked)}
+          />
+          <SettingToggle
+            checked={snapshot.settings.start_providers_at_login}
+            description="Start enabled provider adapters after app startup."
+            label="Start providers at login"
+            onChange={(checked) => updateSetting("start_providers_at_login", checked)}
+          />
+          <SettingToggle
+            checked={snapshot.settings.background_health_polling_enabled}
+            description="Allow scheduled provider health polling while the app is running."
+            label="Background health polling"
+            onChange={(checked) => updateSetting("background_health_polling_enabled", checked)}
+          />
+        </div>
+      </div>
+
+      <div className="background-actions">
+        <button className="secondary-button" type="button" onClick={handleTick}>
+          <Activity size={16} />
+          Run background check
+        </button>
+        <button className="secondary-button" type="button" onClick={handleTestNotification}>
+          <Bell size={16} />
+          Send test notification
+        </button>
+        <span>{statusMessage}</span>
+        {error ? <span className="inline-text-error">{error}</span> : null}
+      </div>
+
+      <table className="data-table background-task-table">
+        <thead>
+          <tr>
+            <th>Task</th>
+            <th>Status</th>
+            <th>Pause Gate</th>
+            <th>Last Run</th>
+            <th>Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {snapshot.tasks.map((task) => (
+            <tr key={task.kind}>
+              <td>{task.label}</td>
+              <td>
+                <span className={`health-pill ${task.status.toLowerCase()}`}>{task.status}</span>
+              </td>
+              <td>{task.suspended_by_pause || appState.lifecycle_state === "Paused" ? "Suspended" : "Open"}</td>
+              <td>{task.last_run_ms ? formatTimestamp(task.last_run_ms) : "Not run"}</td>
+              <td>{task.message}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Panel>
+  );
+}
+
+function SettingToggle({
+  checked,
+  description,
+  label,
+  onChange
+}: {
+  checked: boolean;
+  description: string;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="setting-row">
+      <span>
+        <strong>{label}</strong>
+        <small>{description}</small>
+      </span>
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+    </label>
+  );
+}
+
+function LogsPage({
+  appState,
+  latestNotification
+}: {
+  appState: AppStateSnapshot;
+  latestNotification: NotificationEvent | null;
+}) {
   const history = [...appState.pause_history].reverse();
+  const [backgroundSnapshot, setBackgroundSnapshot] = useState<BackgroundSnapshot | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    let unlisten: (() => void) | undefined;
+    getBackgroundSnapshot().then((snapshot) => {
+      if (!ignore) setBackgroundSnapshot(snapshot);
+    });
+    subscribeBackgroundSnapshot((snapshot) => setBackgroundSnapshot(snapshot)).then((unsubscribe) => {
+      unlisten = unsubscribe;
+      if (ignore) unsubscribe();
+    });
+    return () => {
+      ignore = true;
+      unlisten?.();
+    };
+  }, [latestNotification]);
 
   return (
     <div className="logs-page">
+      <Panel title="Notification Events">
+        {backgroundSnapshot?.notifications.length ? (
+          <table className="data-table logs-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Kind</th>
+                <th>Severity</th>
+                <th>Delivery</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {backgroundSnapshot.notifications.slice(0, 20).map((entry) => (
+                <tr key={`${entry.id}-${entry.kind}`}>
+                  <td>{formatTimestamp(entry.timestamp_ms)}</td>
+                  <td>{entry.kind}</td>
+                  <td>{entry.severity}</td>
+                  <td>{entry.delivery}</td>
+                  <td>
+                    <strong>{entry.title}</strong>
+                    <br />
+                    {entry.body}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="empty-log-state">
+            <Bell size={22} />
+            <strong>No notification events logged yet.</strong>
+            <span>Use Settings to send a test notification or trigger pause/resume.</span>
+          </div>
+        )}
+      </Panel>
+
       <Panel title="Pause / Resume Logs">
         {history.length === 0 ? (
           <div className="empty-log-state">
