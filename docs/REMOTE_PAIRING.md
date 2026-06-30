@@ -5,6 +5,15 @@ LAN.
 
 ## Before You Start
 
+![Remote pairing screen](assets/screenshots/remote-pcs.png)
+
+| Callout | What to use |
+| --- | --- |
+| 1 | Discover finds Bonjour/mDNS brokers. |
+| 2 | Manual Pairing uses a typed broker URL and token. |
+| 3 | Fixed broker address pins a stable URL for unreliable dynamic networks. |
+| 4 | Paired devices confirm health, models, specs, and route candidates. |
+
 - Mac and Windows PC are on the same trusted network.
 - Windows provider software is running if you want real remote model calls.
 - Windows Firewall allows the broker port on private/trusted networks.

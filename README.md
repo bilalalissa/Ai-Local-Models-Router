@@ -126,7 +126,7 @@ For remote routing:
 
 ## How To Use The App
 
-- [User Guide](docs/USER_GUIDE.md): task-based guide to the main pages.
+- [User Guide](docs/USER_GUIDE.md): task-based guide with annotated screenshots.
 - [Providers](docs/PROVIDERS.md): provider expectations and limitations.
 - [Model Catalog](docs/MODEL_CATALOG.md): how compatibility labels work.
 - [Pause Mode](docs/PAUSE_MODE.md): what pause/resume affects.

@@ -34,6 +34,14 @@ apps/desktop/src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Local AI 
 
 ## Recommended First Flow
 
+![Intel Mac model fit workflow](assets/screenshots/model-fit-map.png)
+
+| Callout | What to check |
+| --- | --- |
+| 1 | Select the Intel Mac RAM profile that matches the machine. |
+| 2 | Prefer Smooth or Good results for local use. |
+| 3 | Use Remote preferred routing for heavier models. |
+
 1. Open **Machine Specs** and confirm RAM.
 2. In **Model Fit Map**, avoid models marked `Tight` or `Avoid` on 8 GB Macs.
 3. Start Ollama, LM Studio, or llama.cpp outside the app.

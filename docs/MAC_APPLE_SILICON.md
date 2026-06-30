@@ -37,6 +37,14 @@ requires Developer ID signing and notarization.
 
 ## Recommended First Flow
 
+![Apple Silicon dashboard starting point](assets/screenshots/dashboard.png)
+
+| Callout | What to check |
+| --- | --- |
+| 1 | Confirm the app state is Running before provider checks. |
+| 2 | Use Machine Specs to verify Apple Silicon hardware detection. |
+| 3 | Use Model Fit Map to find Smooth or Good MLX/Ollama candidates. |
+
 1. Open **Machine Specs** and refresh live hardware.
 2. Open **Model Fit Map** and look for `Smooth` or `Good` Apple Silicon models.
 3. Start MLX-LM, Ollama, or LM Studio outside the app.

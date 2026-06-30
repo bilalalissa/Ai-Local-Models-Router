@@ -27,6 +27,15 @@ The script builds MSI and NSIS installers for `x86_64-pc-windows-msvc`.
 
 ## Use Broker Mode
 
+![Windows broker controls](assets/screenshots/remote-pcs.png)
+
+| Callout | What to check |
+| --- | --- |
+| 1 | LAN sharing must be enabled before broker endpoints listen on the network. |
+| 2 | Bind host and port define the URL Mac clients use. |
+| 3 | Pairing creates short-lived codes and revocable client tokens. |
+| 4 | Endpoint previews help verify broker responses during setup. |
+
 Broker mode lets trusted Mac clients route to models on the Windows PC.
 
 1. Open **Remote PCs**.

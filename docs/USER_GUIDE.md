@@ -4,6 +4,15 @@ This guide is organized by task.
 
 ## First Launch
 
+![Dashboard overview](assets/screenshots/dashboard.png)
+
+| Callout | What to use |
+| --- | --- |
+| 1 | Left navigation opens every major workflow. |
+| 2 | The top state badge shows whether automation is running or paused. |
+| 3 | Dashboard cards summarize machine, provider, router, and remote status. |
+| 4 | Quick actions jump to common setup tasks. |
+
 1. Open Local AI Router.
 2. Confirm the state badge says `Running`.
 3. Open **Machine Specs** and refresh the live hardware probe.
@@ -13,6 +22,15 @@ Expected result: the app shows your OS, CPU, memory, GPU, storage, provider
 ports, and current load.
 
 ## Choose A Compatible Model
+
+![Model Fit Map](assets/screenshots/model-fit-map.png)
+
+| Callout | What to use |
+| --- | --- |
+| 1 | Hardware fixture/live profile selector controls the scoring context. |
+| 2 | Filters narrow by use case, provider, preference, and installed status. |
+| 3 | Compatibility labels explain whether a model is Smooth, Good, Tight, or Avoid. |
+| 4 | Score breakdown explains the selected model result. |
 
 1. Open **Model Fit Map**.
 2. Select your hardware profile or use live hardware.
@@ -27,6 +45,15 @@ Expected result: the model table explains why each model fits or does not fit.
 
 ## Connect Local Providers
 
+![Providers page](assets/screenshots/providers.png)
+
+| Callout | What to use |
+| --- | --- |
+| 1 | Provider cards show health, model counts, and pause state. |
+| 2 | Provider settings hold the local base URL and enablement state. |
+| 3 | Model listing and test chat verify provider connectivity. |
+| 4 | Provider logs show recent checks and actions. |
+
 1. Install and start a provider outside the app: Ollama, LM Studio, MLX-LM, or
    an OpenAI-compatible local server.
 2. Open **Providers**.
@@ -40,6 +67,15 @@ start controls where available.
 
 ## Use The Dry-Run Installer
 
+![Models installer flow](assets/screenshots/models-installer.png)
+
+| Callout | What to use |
+| --- | --- |
+| 1 | Setup plan selector chooses Apple Silicon, Intel Mac, or Windows plan. |
+| 2 | Folder rows show where future runtime/model/cache files would live. |
+| 3 | Consent checkbox is required before dry-run execution. |
+| 4 | Command details show exactly what would run in a future live installer. |
+
 1. Open **Models**.
 2. Choose a recommended setup plan.
 3. Read the runtime, model, and cache folders.
@@ -52,6 +88,15 @@ are downloaded.
 
 ## Route A Test Prompt
 
+![Router page](assets/screenshots/router.png)
+
+| Callout | What to use |
+| --- | --- |
+| 1 | Routing mode chooses Auto, Manual, Forced, Local only, Remote preferred, or Remote only. |
+| 2 | Active decision shows the selected provider/model and whether it is executable. |
+| 3 | Thresholds and reasons explain why the route was selected or rejected. |
+| 4 | Test prompt sends a small verification request through the selected route. |
+
 1. Open **Router**.
 2. Choose Auto, Manual, Forced, Local only, Remote preferred, Remote only, or
    Paused.
@@ -61,6 +106,15 @@ are downloaded.
 Expected result: the router explains which provider/model was selected and why.
 
 ## Use A Windows Remote Broker
+
+![Remote PCs broker and client flow](assets/screenshots/remote-pcs.png)
+
+| Callout | What to use |
+| --- | --- |
+| 1 | Mac Remote Client controls discovery, refresh, manual pairing, and fixed address pairing. |
+| 2 | Remote Routing Summary shows whether remotes can be used by Router. |
+| 3 | Paired Remote Devices shows health, specs, models, and latency. |
+| 4 | Windows Remote Provider Broker controls LAN sharing, pairing codes, and endpoint previews. |
 
 1. On the Windows PC, open **Remote PCs**.
 2. Enable LAN sharing.
@@ -90,6 +144,15 @@ used before dynamic Bonjour results when preferred.
 
 ## Pause And Resume
 
+![Settings page](assets/screenshots/settings.png)
+
+| Callout | What to use |
+| --- | --- |
+| 1 | Notification toggles control which background events are surfaced. |
+| 2 | Background toggles control autostart and health polling behavior. |
+| 3 | Pause settings preserve or clear paused state after restart. |
+| 4 | Logs record pause, notification, provider, update, and router events. |
+
 Use pause mode when you want all automation to stop changing state.
 
 Paused mode blocks or suspends routing changes, update checks, installer runs,
@@ -97,6 +160,8 @@ provider background tasks, remote discovery, and broker behavior according to
 the selected broker pause policy.
 
 ## Troubleshooting
+
+![Logs page](assets/screenshots/logs.png)
 
 - Provider not found: confirm the provider is running and the base URL is
   correct.
