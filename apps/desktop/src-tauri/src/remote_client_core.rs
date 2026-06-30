@@ -25,6 +25,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_millis(900);
 pub enum RemoteDiscoverySource {
     MdnsBonjour,
     Manual,
+    FixedAddress,
     Fixture,
 }
 
@@ -46,11 +47,16 @@ pub enum RemoteClientTokenStorage {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
 pub struct RemoteClientSettings {
     pub discovery_enabled: bool,
     pub include_fixture_discovery: bool,
     pub allow_router_remote_models: bool,
     pub mdns_service: String,
+    pub fixed_broker_enabled: bool,
+    pub fixed_broker_name: String,
+    pub fixed_broker_base_url: String,
+    pub prefer_fixed_broker_over_mdns: bool,
 }
 
 impl Default for RemoteClientSettings {
@@ -60,6 +66,10 @@ impl Default for RemoteClientSettings {
             include_fixture_discovery: true,
             allow_router_remote_models: true,
             mdns_service: LOCAL_AI_ROUTER_MDNS_SERVICE.to_string(),
+            fixed_broker_enabled: false,
+            fixed_broker_name: "Studio Windows Broker".to_string(),
+            fixed_broker_base_url: "http://192.168.1.50:17640".to_string(),
+            prefer_fixed_broker_over_mdns: true,
         }
     }
 }
@@ -242,15 +252,31 @@ impl RemoteClientManager {
                 "Remote discovery is suspended while the app is paused.".to_string(),
             ));
         }
-        if !self.settings.discovery_enabled {
+        if !self.settings.discovery_enabled && !self.settings.fixed_broker_enabled {
             return Ok(self.build_snapshot(
                 RemoteClientStatus::Discovered,
                 "Remote discovery is disabled in settings.".to_string(),
             ));
         }
-        let mut results = discover_mdns(&self.settings.mdns_service);
+        let fixed = if self.settings.fixed_broker_enabled {
+            Some(fixed_broker_discovery(&self.settings)?)
+        } else {
+            None
+        };
+        let mut results = if self.settings.discovery_enabled {
+            discover_mdns(&self.settings.mdns_service)
+        } else {
+            Vec::new()
+        };
         if self.settings.include_fixture_discovery {
             results.push(fixture_discovery());
+        }
+        if let Some(fixed) = fixed {
+            if self.settings.prefer_fixed_broker_over_mdns {
+                results.insert(0, fixed);
+            } else {
+                results.push(fixed);
+            }
         }
         dedupe_discovery(&mut results);
         self.discovered = results;
@@ -697,8 +723,33 @@ fn fixture_discovery() -> RemoteDiscoveryResult {
         base_url: "fixture://studio-win11".to_string(),
         discovered_at_ms: now_ms(),
         latency_ms: Some(24),
-        message: "Fixture remote broker used for Stage 12 tests and browser preview.".to_string(),
+        message: "Fixture remote broker used for browser preview and local verification."
+            .to_string(),
     }
+}
+
+fn fixed_broker_discovery(
+    settings: &RemoteClientSettings,
+) -> Result<RemoteDiscoveryResult, String> {
+    let base_url = normalize_base_url(&settings.fixed_broker_base_url)?;
+    let parsed = parse_http_base_url(&base_url)?;
+    let name = settings.fixed_broker_name.trim();
+    Ok(RemoteDiscoveryResult {
+        id: format!("fixed-{}", stable_id(&base_url)),
+        name: if name.is_empty() {
+            "Fixed Windows Broker".to_string()
+        } else {
+            name.to_string()
+        },
+        source: RemoteDiscoverySource::FixedAddress,
+        service_type: "fixed-address".to_string(),
+        address: parsed.host,
+        port: parsed.port,
+        base_url,
+        discovered_at_ms: now_ms(),
+        latency_ms: None,
+        message: "Pinned fixed broker address. Configure router DHCP reservation or OS static IP for stability.".to_string(),
+    })
 }
 
 fn apply_fixture_device_snapshot(device: &mut RemoteClientDevice) {
@@ -904,10 +955,20 @@ fn parse_http_base_url(base_url: &str) -> Result<ParsedBaseUrl, String> {
         .split_once('/')
         .map(|(authority, path)| (authority, format!("/{path}")))
         .unwrap_or((without_scheme, String::new()));
-    let (host, port) = authority
-        .rsplit_once(':')
-        .and_then(|(host, port)| port.parse::<u16>().ok().map(|port| (host, port)))
-        .unwrap_or((authority, 80));
+    if authority.trim().is_empty() {
+        return Err("remote broker URL must include a host.".to_string());
+    }
+    let (host, port) = if let Some((host, port)) = authority.rsplit_once(':') {
+        let parsed_port = port
+            .parse::<u16>()
+            .map_err(|_| "remote broker URL port must be between 1 and 65535.".to_string())?;
+        (host, parsed_port)
+    } else {
+        (authority, 80)
+    };
+    if host.trim().is_empty() || port == 0 {
+        return Err("remote broker URL must include a valid host and port.".to_string());
+    }
     Ok(ParsedBaseUrl {
         host: host.to_string(),
         port,
@@ -1051,6 +1112,31 @@ mod tests {
             .discovered
             .iter()
             .any(|result| result.source == RemoteDiscoverySource::Fixture));
+    }
+
+    #[test]
+    fn fixed_broker_discovery_can_be_preferred_over_dynamic_results() {
+        let mut manager = RemoteClientManager::new_for_test(temp_dir("fixed"));
+        manager.settings.fixed_broker_enabled = true;
+        manager.settings.fixed_broker_name = "Pinned Studio Broker".to_string();
+        manager.settings.fixed_broker_base_url = "http://192.168.1.50:17640".to_string();
+        manager.settings.prefer_fixed_broker_over_mdns = true;
+
+        let snapshot = manager.discover(false).expect("discover");
+        let first = snapshot.discovered.first().expect("fixed result");
+        assert_eq!(first.source, RemoteDiscoverySource::FixedAddress);
+        assert_eq!(first.name, "Pinned Studio Broker");
+        assert_eq!(first.base_url, "http://192.168.1.50:17640");
+    }
+
+    #[test]
+    fn fixed_broker_discovery_rejects_invalid_url() {
+        let mut manager = RemoteClientManager::new_for_test(temp_dir("fixed-invalid"));
+        manager.settings.fixed_broker_enabled = true;
+        manager.settings.fixed_broker_base_url = "192.168.1.50:17640".to_string();
+
+        let err = manager.discover(false).expect_err("invalid fixed broker");
+        assert!(err.contains("http://"));
     }
 
     #[test]

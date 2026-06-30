@@ -23,6 +23,8 @@ For stable and safer remote use:
 - Keep the broker on a private/trusted LAN.
 - Do not expose the broker port to the internet.
 - Revoke tokens if a Mac is lost or no longer trusted.
+- Treat the fixed broker URL as a routing preference, not a security boundary;
+  bearer tokens and firewall scope still matter.
 
 ## Secrets
 

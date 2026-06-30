@@ -11,7 +11,7 @@ LAN.
 | --- | --- |
 | 1 | Discover finds Bonjour/mDNS brokers. |
 | 2 | Manual Pairing uses a typed broker URL and token. |
-| 3 | Fixed broker address pins a stable URL for unreliable dynamic networks. |
+| 3 | Fixed broker address pins a stable URL and can be preferred over Bonjour. |
 | 4 | Paired devices confirm health, models, specs, and route candidates. |
 
 - Mac and Windows PC are on the same trusted network.
@@ -46,10 +46,15 @@ Use this to avoid communication issues from dynamic IP changes.
 2. On Mac, enable **Use fixed broker address**.
 3. Enter the fixed broker name and URL.
 4. Enable **Prefer fixed address over Bonjour** when this should be primary.
-5. Pair or refresh using the fixed broker.
+5. Enter a pairing token/code.
+6. Click **Pair fixed address**, or run **Discover** to list the fixed broker
+   as a candidate.
 
 This pins the app connection. It does not configure the router or operating
 system IP address for you.
+
+Valid fixed URLs must start with `http://` and include a reachable host. The
+default broker port is `17640`, for example `http://192.168.1.50:17640`.
 
 ## Troubleshooting
 

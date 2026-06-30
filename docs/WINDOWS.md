@@ -57,6 +57,8 @@ To prevent communication failures after router DHCP changes:
 - Or configure a static IPv4 address in Windows network settings.
 - Then enter that stable URL in the Mac app fixed broker address field, for
   example `http://192.168.1.50:17640`.
+- In Local AI Router, enable **Prefer fixed address over Bonjour** when the
+  reserved/static IP should be used before dynamic discovery results.
 
 ## Expected Result
 

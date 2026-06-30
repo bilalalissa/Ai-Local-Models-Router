@@ -139,6 +139,8 @@ Use this when Bonjour discovery is unreliable or the Windows PC IP changes.
 5. Enable **Prefer fixed address over Bonjour** if this should be the primary
    remote connection.
 6. Click **Pair fixed address** with a valid pairing token/code.
+7. Or click **Discover** to list the fixed broker as a stable candidate before
+   Bonjour/fixture results.
 
 Expected result: the fixed broker appears as a stable discovery candidate and is
 used before dynamic Bonjour results when preferred.

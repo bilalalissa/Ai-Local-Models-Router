@@ -6,7 +6,7 @@ import type { RouteCandidate } from "./router";
 
 export const localAiRouterMdnsService = "_localai-router._tcp";
 
-export type RemoteDiscoverySource = "MdnsBonjour" | "Manual" | "Fixture";
+export type RemoteDiscoverySource = "MdnsBonjour" | "Manual" | "FixedAddress" | "Fixture";
 export type RemoteClientStatus = "Discovered" | "Paired" | "Online" | "Offline" | "AuthFailed" | "Paused" | "Error";
 export type RemoteClientTokenStorage = "ProtectedAppDataFile" | "BrowserPreviewStorage";
 
@@ -15,6 +15,10 @@ export type RemoteClientSettings = {
   include_fixture_discovery: boolean;
   allow_router_remote_models: boolean;
   mdns_service: string;
+  fixed_broker_enabled: boolean;
+  fixed_broker_name: string;
+  fixed_broker_base_url: string;
+  prefer_fixed_broker_over_mdns: boolean;
 };
 
 export type RemoteDiscoveryResult = {
@@ -80,7 +84,11 @@ const defaultSettings: RemoteClientSettings = {
   discovery_enabled: true,
   include_fixture_discovery: true,
   allow_router_remote_models: true,
-  mdns_service: localAiRouterMdnsService
+  mdns_service: localAiRouterMdnsService,
+  fixed_broker_enabled: false,
+  fixed_broker_name: "Studio Windows Broker",
+  fixed_broker_base_url: "http://192.168.1.50:17640",
+  prefer_fixed_broker_over_mdns: true
 };
 
 export async function getRemoteClientSnapshot(): Promise<RemoteClientSnapshot> {
@@ -97,21 +105,27 @@ export async function updateRemoteClientSettings(settings: RemoteClientSettings)
 export async function discoverRemoteClients(): Promise<RemoteClientSnapshot> {
   if (isTauriRuntime()) return invoke<RemoteClientSnapshot>("discover_remote_clients");
   const state = readFallbackState();
-  if (!state.snapshot.settings.discovery_enabled) {
+  if (!state.snapshot.settings.discovery_enabled && !state.snapshot.settings.fixed_broker_enabled) {
     return writeFallbackState({
       ...state,
       snapshot: normalizeSnapshot({ ...state.snapshot, status: "Discovered", message: "Remote discovery is disabled." })
     });
   }
+  const fixed = state.snapshot.settings.fixed_broker_enabled ? fixedDiscovery(state.snapshot.settings) : null;
   const discovered = state.snapshot.settings.include_fixture_discovery ? [fixtureDiscovery()] : [];
+  if (fixed) {
+    if (state.snapshot.settings.prefer_fixed_broker_over_mdns) discovered.unshift(fixed);
+    else discovered.push(fixed);
+  }
+  const deduped = dedupeDiscovery(discovered);
   return writeFallbackState({
     ...state,
     snapshot: normalizeSnapshot({
       ...state.snapshot,
       status: "Discovered",
-      discovered,
+      discovered: deduped,
       last_discovery_ms: Date.now(),
-      message: `${discovered.length} remote broker candidates discovered.`
+      message: `${deduped.length} remote broker candidates discovered.`
     })
   });
 }
@@ -119,7 +133,8 @@ export async function discoverRemoteClients(): Promise<RemoteClientSnapshot> {
 export async function pairManualRemoteClient(request: ManualPairRequest): Promise<RemoteClientSnapshot> {
   if (isTauriRuntime()) return invoke<RemoteClientSnapshot>("pair_manual_remote_client", { request });
   const state = readFallbackState();
-  const device = fixtureDevice(request.name || "Studio-Win11 Broker", request.base_url, request.token);
+  const baseUrl = normalizeBaseUrl(request.base_url);
+  const device = fixtureDevice(request.name || "Studio-Win11 Broker", baseUrl, request.token);
   return writeFallbackState({
     snapshot: normalizeSnapshot({
       ...state.snapshot,
@@ -225,10 +240,11 @@ function writeFallbackState(state: FallbackState): RemoteClientSnapshot {
 }
 
 function normalizeSnapshot(snapshot: RemoteClientSnapshot): RemoteClientSnapshot {
-  const route_candidates = snapshot.settings.allow_router_remote_models
+  const settings = { ...defaultSettings, ...snapshot.settings };
+  const route_candidates = settings.allow_router_remote_models
     ? snapshot.paired_devices.filter((device) => device.status === "Online").flatMap(routeCandidatesForDevice)
     : [];
-  return { ...snapshot, route_candidates };
+  return { ...snapshot, settings, route_candidates };
 }
 
 function fixtureDiscovery(): RemoteDiscoveryResult {
@@ -243,6 +259,23 @@ function fixtureDiscovery(): RemoteDiscoveryResult {
     discovered_at_ms: Date.now(),
     latency_ms: 24,
     message: "Fixture remote broker used for browser preview and local verification."
+  };
+}
+
+function fixedDiscovery(settings: RemoteClientSettings): RemoteDiscoveryResult {
+  const baseUrl = normalizeBaseUrl(settings.fixed_broker_base_url);
+  const parsed = parseHttpBaseUrl(baseUrl);
+  return {
+    id: `fixed-${stableId(baseUrl)}`,
+    name: settings.fixed_broker_name.trim() || "Fixed Windows Broker",
+    source: "FixedAddress",
+    service_type: "fixed-address",
+    address: parsed.host,
+    port: parsed.port,
+    base_url: baseUrl,
+    discovered_at_ms: Date.now(),
+    latency_ms: null,
+    message: "Pinned fixed broker address. Configure router DHCP reservation or OS static IP for stability."
   };
 }
 
@@ -281,6 +314,35 @@ function fixtureDevice(name: string, baseUrl: string, token: string): RemoteClie
     ],
     message: "Fixture Windows broker is online."
   };
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (trimmed.startsWith("fixture://")) return trimmed;
+  if (!trimmed.startsWith("http://")) throw new Error("remote broker URL must start with http://");
+  parseHttpBaseUrl(trimmed);
+  return trimmed;
+}
+
+function parseHttpBaseUrl(baseUrl: string): { host: string; port: number } {
+  const withoutScheme = baseUrl.replace(/^http:\/\//, "");
+  const authority = withoutScheme.split("/")[0];
+  if (!authority.trim()) throw new Error("remote broker URL must include a host.");
+  const [host, portRaw] = authority.includes(":") ? authority.split(":") : [authority, "80"];
+  const port = Number(portRaw);
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("remote broker URL must include a valid host and port.");
+  }
+  return { host, port };
+}
+
+function dedupeDiscovery(results: RemoteDiscoveryResult[]): RemoteDiscoveryResult[] {
+  const seen = new Set<string>();
+  return results.filter((result) => {
+    if (seen.has(result.base_url)) return false;
+    seen.add(result.base_url);
+    return true;
+  });
 }
 
 function routeCandidatesForDevice(device: RemoteClientDevice): RouteCandidate[] {

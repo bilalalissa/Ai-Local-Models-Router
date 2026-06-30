@@ -168,7 +168,8 @@ Steps:
 3. Enter a name such as `Studio Windows Broker`.
 4. Enter a URL such as `http://192.168.1.50:17640`.
 5. Enable **Prefer fixed address over Bonjour**.
-6. Pair or refresh the fixed broker.
+6. Enter the pairing token/code.
+7. Click **Pair fixed address** or run **Discover**.
 
 Expected result: the fixed broker candidate appears first and remains stable
 across discovery refreshes.

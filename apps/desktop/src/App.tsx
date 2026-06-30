@@ -1740,6 +1740,7 @@ function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
   const [manualRemoteUrl, setManualRemoteUrl] = useState("fixture://studio-win11");
   const [manualRemoteToken, setManualRemoteToken] = useState("lar_stage12_fixture_token");
   const [discoveredToken, setDiscoveredToken] = useState("lar_stage12_fixture_token");
+  const [fixedRemoteToken, setFixedRemoteToken] = useState("lar_fixed_broker_token");
   const isPaused = appState.lifecycle_state === "Paused";
 
   useEffect(() => {
@@ -1839,6 +1840,23 @@ function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
       setStatusMessage("Manual remote pairing failed.");
     }
   }, [manualRemoteName, manualRemoteToken, manualRemoteUrl]);
+
+  const pairFixedRemote = useCallback(async () => {
+    if (!clientSnapshot) return;
+    setError(null);
+    try {
+      const nextSnapshot = await pairManualRemoteClient({
+        name: clientSnapshot.settings.fixed_broker_name.trim() || "Fixed Windows Broker",
+        base_url: clientSnapshot.settings.fixed_broker_base_url.trim(),
+        token: fixedRemoteToken.trim()
+      });
+      setClientSnapshot(nextSnapshot);
+      setStatusMessage("Fixed broker address paired.");
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Fixed broker pairing failed.");
+    }
+  }, [clientSnapshot, fixedRemoteToken]);
 
   const pairFirstDiscovery = useCallback(async () => {
     const discovery = clientSnapshot?.discovered[0];
@@ -2045,6 +2063,54 @@ function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
             <button className="secondary-button" disabled={isPaused} onClick={pairManualRemote} type="button">
               <ShieldCheck size={16} />
               Pair manual broker
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="Fixed Broker Address">
+          <div className="settings-list">
+            <SettingToggle
+              checked={clientSnapshot.settings.fixed_broker_enabled}
+              description="Pin a stable broker URL inside Local AI Router. This does not assign a static OS or router IP."
+              label="Use fixed broker address"
+              onChange={(checked) => updateClientSetting("fixed_broker_enabled", checked)}
+            />
+            <SettingToggle
+              checked={clientSnapshot.settings.prefer_fixed_broker_over_mdns}
+              description="List the fixed broker before Bonjour and fixture discovery results."
+              label="Prefer fixed address over Bonjour"
+              onChange={(checked) => updateClientSetting("prefer_fixed_broker_over_mdns", checked)}
+            />
+          </div>
+          <div className="broker-form-grid single">
+            <label>
+              <span>Fixed broker name</span>
+              <input
+                value={clientSnapshot.settings.fixed_broker_name}
+                onChange={(event) => updateClientSetting("fixed_broker_name", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Fixed broker URL</span>
+              <input
+                placeholder="http://192.168.1.50:17640"
+                value={clientSnapshot.settings.fixed_broker_base_url}
+                onChange={(event) => updateClientSetting("fixed_broker_base_url", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Pairing token</span>
+              <input value={fixedRemoteToken} onChange={(event) => setFixedRemoteToken(event.target.value)} />
+            </label>
+          </div>
+          <p className="fine-print">
+            For best stability, reserve the Windows broker IP in your router or set a static IP in Windows,
+            then pin that URL here.
+          </p>
+          <div className="remote-broker-actions">
+            <button className="secondary-button" disabled={isPaused} onClick={pairFixedRemote} type="button">
+              <ShieldCheck size={16} />
+              Pair fixed address
             </button>
           </div>
         </Panel>
