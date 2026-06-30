@@ -1421,6 +1421,167 @@ button:disabled {
   margin: 0 auto;
 }
 
+.remote-broker-page {
+  display: grid;
+  gap: 16px;
+  max-width: 1340px;
+  min-width: 0;
+  margin: 0 auto;
+}
+
+.remote-broker-page .panel {
+  min-width: 0;
+}
+
+.remote-broker-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto auto auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.remote-broker-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
+  gap: 16px;
+}
+
+.broker-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.broker-form-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.broker-form-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.broker-form-grid input,
+.broker-form-grid select {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: #f8fafc;
+  color: var(--text);
+  font: inherit;
+}
+
+.remote-broker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.pairing-code-box,
+.token-box {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.pairing-code-box span,
+.pairing-code-box small,
+.token-box span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.pairing-code-box strong {
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
+.token-box code {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: auto;
+  color: #172033;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.warning-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.warning-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid #f0d58b;
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #fff8ec;
+  color: #6a4a00;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.remote-client-table td,
+.endpoint-table td {
+  vertical-align: middle;
+}
+
+.remote-client-table,
+.endpoint-table {
+  min-width: 560px;
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.endpoint-table code {
+  color: #172033;
+  font-size: 12px;
+}
+
+.table-action {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.json-preview {
+  max-height: 300px;
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+  color: #172033;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.empty-log-state.compact {
+  padding: 16px;
+}
+
 .updates-page {
   display: grid;
   gap: 16px;
@@ -1728,6 +1889,7 @@ button:disabled {
   .fit-content-grid,
   .provider-card-grid,
   .provider-detail-grid,
+  .remote-broker-grid,
   .installer-grid,
   .updates-grid,
   .update-card-grid {
@@ -1754,6 +1916,7 @@ button:disabled {
   .router-control-row,
   .provider-toolbar,
   .provider-chat-form,
+  .remote-broker-toolbar,
   .updates-toolbar,
   .installer-toolbar {
     grid-template-columns: 1fr;
@@ -1761,6 +1924,7 @@ button:disabled {
 
   .fit-content-grid,
   .provider-detail-grid,
+  .remote-broker-grid,
   .installer-grid,
   .updates-grid {
     grid-template-columns: 1fr;
@@ -1837,6 +2001,7 @@ button:disabled {
   .fit-content-grid,
   .provider-card-grid,
   .provider-detail-grid,
+  .remote-broker-grid,
   .settings-grid,
   .background-settings-grid,
   .updates-grid,
@@ -1844,6 +2009,8 @@ button:disabled {
   .empty-grid,
   .hardware-toolbar,
   .fit-toolbar,
+  .remote-broker-toolbar,
+  .broker-form-grid,
   .updates-toolbar,
   .provider-toolbar,
   .provider-chat-form,

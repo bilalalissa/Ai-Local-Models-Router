@@ -6,7 +6,7 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 10: model update metadata checker. The
+This repository is currently at Stage 11: Windows remote provider broker. The
 Tauri desktop shell exists, exposes persisted pause/resume state, includes
 native hardware probing and specs export, scores a seeded local model catalog,
 includes local HTTP adapters for Ollama, LM Studio, custom OpenAI-compatible
@@ -22,9 +22,11 @@ events for pause/resume, install completion, router changes, provider errors,
 and forced-model pressure. Model update metadata checks now use fixture-only
 Ollama, MLX/Hugging Face, and custom JSON sources with compatibility labels,
 history, ignore/remind-later/install/install-and-switch actions, privacy mode,
-and pause-aware scheduled checks. Real installers/downloads, remote broker
-behavior, and remote model automation are intentionally deferred to later
-approved stages.
+and pause-aware scheduled checks. Windows remote broker mode now has opt-in LAN
+sharing state, authenticated endpoint definitions, pairing codes, connected
+client tokens, revoke controls, firewall guidance, security warnings, and
+pause-policy behavior. Real installers/downloads, Mac remote client discovery,
+and remote model automation are intentionally deferred to later approved stages.
 
 ## Stage Gate Rule
 
@@ -92,6 +94,10 @@ start the next implementation stage until the user explicitly approves it.
   MLX/Hugging Face, and custom JSON metadata sources, compatibility-scored
   update candidates, privacy and pause gates, update cards, history, ignore,
   remind later, dry-run install, and dry-run install-and-switch actions.
+- Stage 11 Windows remote provider broker: Rust `remote_broker_core`, opt-in LAN
+  sharing, Windows-only broker start gate, authenticated endpoint catalog,
+  pairing code and token flow, connected-client revoke, firewall/security
+  guidance, pause-policy handling, Remote PCs broker UI, and endpoint previews.
 
 ## Planned Stack
 
@@ -141,13 +147,14 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 10 note: the installer is dry-run only. It records realistic command hooks
+Stage 11 note: the installer is dry-run only. It records realistic command hooks
 and app-managed folder paths, but never executes commands or downloads model
 weights. Router decisions and routed test prompts exist for local providers.
 Remote preferred and remote-only routing remain explicit placeholders until the
-remote broker/client stages. Stage 10 update checks read local fixtures only;
-live metadata calls, real downloads, and Stages 11-12 remote broker/client
-workers do not exist yet.
+Mac remote client stage. Stage 10 update checks read local fixtures only; live
+metadata calls and real downloads do not exist yet. Stage 11 broker mode includes
+a Windows-gated LAN HTTP listener plus command-driven endpoint previews for local
+verification; Mac client discovery/routing remains deferred to Stage 12.
 
 ## Visual Baseline
 
@@ -176,7 +183,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 8 - Router Auto/Manual/Forced Model Selection
 - [x] Stage 9 - Notifications and Background Behavior
 - [x] Stage 10 - Model Update Metadata Checker
-- [ ] Stage 11 - Windows Remote Provider Broker
+- [x] Stage 11 - Windows Remote Provider Broker
 - [ ] Stage 12 - Mac Remote Client
 - [ ] Stage 13 - Packaging and Installers
 - [ ] Stage 14 - Final Testing, Documentation, and Polish
@@ -308,7 +315,7 @@ marked as a stub.
 - Test with metadata fixtures only.
 - Stop and ask for approval.
 
-### Stage 11 - Windows Remote Provider Broker
+### [x] Stage 11 - Windows Remote Provider Broker
 
 - Implement `remote_broker` server mode on Windows.
 - Add opt-in LAN sharing and authenticated endpoints:

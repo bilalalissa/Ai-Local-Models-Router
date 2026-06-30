@@ -119,6 +119,23 @@ import {
   runRouterTestPrompt
 } from "./router";
 import {
+  type BrokerEndpointRequest,
+  type BrokerPausePolicy,
+  type RemoteBrokerSettings,
+  type RemoteBrokerSnapshot,
+  type RemoteBrokerStatus,
+  type RemoteDevice,
+  createRemotePairingCode,
+  getRemoteBrokerSnapshot,
+  previewRemoteBrokerEndpoint,
+  registerRemoteBrokerClient,
+  revokeRemoteBrokerClient,
+  startRemoteBroker,
+  stopRemoteBroker,
+  subscribeRemoteBrokerSnapshot,
+  updateRemoteBrokerSettings
+} from "./remoteBroker";
+import {
   type MetadataSourceKind,
   type UpdateActionKind,
   type UpdateCandidate,
@@ -176,7 +193,10 @@ const navItems: NavItem[] = [
 ];
 
 const pageContent: Record<
-  Exclude<PageId, "dashboard" | "machine-specs" | "model-fit-map" | "providers" | "router" | "settings" | "logs">,
+  Exclude<
+    PageId,
+    "dashboard" | "machine-specs" | "model-fit-map" | "providers" | "router" | "remote-pcs" | "settings" | "logs"
+  >,
   EmptyPage
 > = {
   models: {
@@ -185,13 +205,6 @@ const pageContent: Record<
     summary:
       "Install, uninstall, force, and switch model actions are intentionally inactive until later stages.",
     readiness: ["Installed model list", "Detail pane", "Manual action area"]
-  },
-  "remote-pcs": {
-    title: "Remote PCs",
-    eyebrow: "Stage 1 page shell",
-    summary:
-      "Remote discovery, pairing, and Windows broker integration are deferred to Stages 11 and 12.",
-    readiness: ["Discovery controls", "Manual IP entry", "Paired devices list"]
   },
   updates: {
     title: "Updates",
@@ -356,6 +369,8 @@ export default function App() {
             <UpdatesPage appState={appState} />
           ) : activePage === "router" ? (
             <RouterShell appState={appState} onPause={handlePause} onResume={handleResume} />
+          ) : activePage === "remote-pcs" ? (
+            <RemoteBrokerPage appState={appState} />
           ) : activePage === "settings" ? (
             <SettingsPage
               appState={appState}
@@ -409,7 +424,7 @@ function Sidebar({
             >
               <Icon size={19} />
               <span>{item.label}</span>
-              {item.id === "updates" ? <span className="count-badge">2</span> : null}
+              {item.id === "updates" || item.id === "remote-pcs" ? <span className="count-badge">2</span> : null}
             </button>
           );
         })}
@@ -417,7 +432,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 10 updater</span>
+          <span>Stage 11 broker</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -1690,6 +1705,448 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
+  const [snapshot, setSnapshot] = useState<RemoteBrokerSnapshot | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Loading Windows broker controls...");
+  const [error, setError] = useState<string | null>(null);
+  const [clientName, setClientName] = useState("MacBook client");
+  const [clientAddress, setClientAddress] = useState("192.168.1.40");
+  const [pairingCode, setPairingCode] = useState("");
+  const [lastToken, setLastToken] = useState("");
+  const [previewToken, setPreviewToken] = useState("");
+  const [previewEndpoint, setPreviewEndpoint] = useState("/api/health");
+  const [previewResponse, setPreviewResponse] = useState<unknown>(null);
+  const isPaused = appState.lifecycle_state === "Paused";
+
+  useEffect(() => {
+    let ignore = false;
+    const unsubscribe = subscribeRemoteBrokerSnapshot((nextSnapshot) => {
+      setSnapshot(nextSnapshot);
+      setStatusMessage(nextSnapshot.message);
+    });
+    getRemoteBrokerSnapshot()
+      .then((nextSnapshot) => {
+        if (ignore) return;
+        setSnapshot(nextSnapshot);
+        setStatusMessage(nextSnapshot.message);
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatusMessage("Windows broker controls failed to load.");
+      });
+    return () => {
+      ignore = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const updateSetting = useCallback(
+    async (key: keyof RemoteBrokerSettings, value: boolean | number | string | BrokerPausePolicy) => {
+      if (!snapshot) return;
+      setError(null);
+      try {
+        const nextSnapshot = await updateRemoteBrokerSettings({
+          ...snapshot.settings,
+          [key]: value
+        });
+        setSnapshot(nextSnapshot);
+        setStatusMessage(nextSnapshot.message);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Broker settings failed to save.");
+      }
+    },
+    [snapshot]
+  );
+
+  const runBrokerAction = useCallback(
+    async (action: "start" | "stop" | "pair") => {
+      setError(null);
+      try {
+        if (action === "start") {
+          const nextSnapshot = await startRemoteBroker();
+          setSnapshot(nextSnapshot);
+          setStatusMessage(nextSnapshot.message);
+          return;
+        }
+        if (action === "stop") {
+          const nextSnapshot = await stopRemoteBroker();
+          setSnapshot(nextSnapshot);
+          setStatusMessage(nextSnapshot.message);
+          return;
+        }
+        const result = await createRemotePairingCode();
+        setSnapshot(result.snapshot);
+        setPairingCode(result.session.code);
+        setStatusMessage(`Pairing code ${result.session.code} is active.`);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Broker action failed.");
+      }
+    },
+    []
+  );
+
+  const registerClient = useCallback(async () => {
+    if (!pairingCode.trim()) return;
+    setError(null);
+    try {
+      const registration = await registerRemoteBrokerClient({
+        code: pairingCode.trim(),
+        client_name: clientName.trim() || "Remote client",
+        address: clientAddress.trim() || "unknown"
+      });
+      setSnapshot(registration.snapshot);
+      setLastToken(registration.token);
+      setPreviewToken(registration.token);
+      setStatusMessage(`${registration.device.name} paired. Copy the token now; it is shown once.`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Client pairing failed.");
+    }
+  }, [clientAddress, clientName, pairingCode]);
+
+  const revokeClient = useCallback(async (device: RemoteDevice) => {
+    setError(null);
+    try {
+      const nextSnapshot = await revokeRemoteBrokerClient(device.id);
+      setSnapshot(nextSnapshot);
+      setStatusMessage(`${device.name} revoked.`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Client revoke failed.");
+    }
+  }, []);
+
+  const runEndpointPreview = useCallback(async () => {
+    const endpoint = snapshot?.endpoints.find((item) => item.path === previewEndpoint);
+    if (!endpoint) return;
+    setError(null);
+    try {
+      const request: BrokerEndpointRequest = {
+        method: endpoint.method,
+        path: endpoint.path,
+        bearer_token: previewToken || null,
+        body:
+          endpoint.path === "/v1/chat/completions"
+            ? { model: "local-model", messages: [{ role: "user", content: "health check" }] }
+            : null
+      };
+      const response = await previewRemoteBrokerEndpoint(request);
+      setPreviewResponse(response);
+      setStatusMessage(`Endpoint preview returned HTTP ${response.status_code}.`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Endpoint preview failed.");
+    }
+  }, [previewEndpoint, previewToken, snapshot?.endpoints]);
+
+  if (!snapshot) {
+    return (
+      <div className="remote-broker-page">
+        <Panel title="Windows Remote Provider Broker">
+          <div className="loading-state">
+            <Network size={22} />
+            <strong>{statusMessage}</strong>
+            {error ? <span>{error}</span> : <span>Preparing broker state.</span>}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  const running = snapshot.status === "Running" || snapshot.status === "PausedOnline";
+  const activeSession = snapshot.pairing_sessions.find((session) => session.status === "Active");
+  const liveEndpoint = snapshot.endpoints.find((endpoint) => endpoint.path === previewEndpoint);
+
+  return (
+    <div className="remote-broker-page">
+      <Panel title="Windows Remote Provider Broker">
+        <div className="remote-broker-toolbar">
+          <div className="hardware-title">
+            <Network size={24} />
+            <div>
+              <strong>{remoteBrokerStatusLabel(snapshot.status)}</strong>
+              <span>{statusMessage}</span>
+            </div>
+          </div>
+          <button
+            className="secondary-button"
+            disabled={running || snapshot.status === "PlatformBlocked"}
+            onClick={() => runBrokerAction("start")}
+            type="button"
+          >
+            <Play size={16} />
+            Start broker
+          </button>
+          <button className="secondary-button" disabled={!running} onClick={() => runBrokerAction("stop")} type="button">
+            <Pause size={16} />
+            Stop broker
+          </button>
+          <button className="secondary-button" disabled={!running} onClick={() => runBrokerAction("pair")} type="button">
+            <ShieldCheck size={16} />
+            New pairing code
+          </button>
+        </div>
+        {error ? <div className="inline-error">{error}</div> : null}
+      </Panel>
+
+      <div className="remote-broker-grid">
+        <Panel title="Broker Settings">
+          <div className="settings-list">
+            <SettingToggle
+              checked={snapshot.settings.lan_sharing_enabled}
+              description="Opt in before exposing broker endpoints on a trusted LAN."
+              label="LAN sharing"
+              onChange={(checked) => updateSetting("lan_sharing_enabled", checked)}
+            />
+            <SettingToggle
+              checked={snapshot.settings.advertise_mdns}
+              description="Advertise the broker for future Stage 12 discovery."
+              label="mDNS advertisement"
+              onChange={(checked) => updateSetting("advertise_mdns", checked)}
+            />
+            <SettingToggle
+              checked={snapshot.settings.require_bearer_token}
+              description="Require paired-client bearer tokens for all broker endpoints."
+              label="Bearer token required"
+              onChange={(checked) => updateSetting("require_bearer_token", checked)}
+            />
+          </div>
+          <div className="broker-form-grid">
+            <label>
+              <span>Bind host</span>
+              <input
+                value={snapshot.settings.bind_host}
+                onChange={(event) => updateSetting("bind_host", event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Port</span>
+              <input
+                min={1}
+                max={65535}
+                type="number"
+                value={snapshot.settings.port}
+                onChange={(event) => updateSetting("port", Number(event.target.value))}
+              />
+            </label>
+            <label>
+              <span>Pause policy</span>
+              <select
+                value={snapshot.settings.pause_policy}
+                onChange={(event) => updateSetting("pause_policy", event.target.value as BrokerPausePolicy)}
+              >
+                <option value="KeepOnline">Keep online</option>
+                <option value="RejectNewRequests">Reject new requests</option>
+                <option value="StopUntilResume">Stop until resume</option>
+              </select>
+            </label>
+          </div>
+        </Panel>
+
+        <Panel title="Broker Summary">
+          <div className="state-summary">
+            <StatusLine label="Platform" value={snapshot.platform === "WindowsX64" ? "Windows x64" : "Preview only"} />
+            <StatusLine label="Listen URL" value={snapshot.listen_url ?? "Not listening"} />
+            <StatusLine label="Pause state" value={isPaused ? pausePolicyLabel(snapshot.settings.pause_policy) : "Running gate open"} />
+            <StatusLine
+              label="Active clients"
+              value={String(snapshot.connected_clients.filter((device) => !device.revoked).length)}
+            />
+            <StatusLine label="Auth" value={snapshot.settings.require_bearer_token ? "Required" : "Disabled"} />
+          </div>
+        </Panel>
+      </div>
+
+      <div className="remote-broker-grid">
+        <Panel title="Pairing">
+          <div className="pairing-code-box">
+            <span>Active code</span>
+            <strong>{pairingCode || activeSession?.code || "No active code"}</strong>
+            <small>
+              {activeSession
+                ? `Expires ${formatTimestamp(activeSession.expires_at_ms)}`
+                : pairingCode
+                  ? "Code has been consumed by a paired client."
+                  : "Start broker, then create a code."}
+            </small>
+          </div>
+          <div className="broker-form-grid">
+            <label>
+              <span>Client name</span>
+              <input value={clientName} onChange={(event) => setClientName(event.target.value)} />
+            </label>
+            <label>
+              <span>Client address</span>
+              <input value={clientAddress} onChange={(event) => setClientAddress(event.target.value)} />
+            </label>
+          </div>
+          <div className="remote-broker-actions">
+            <button className="secondary-button" disabled={!pairingCode && !activeSession} onClick={registerClient} type="button">
+              <ShieldCheck size={16} />
+              Register paired client
+            </button>
+            {lastToken ? (
+              <button className="secondary-button" onClick={() => copyText(lastToken)} type="button">
+                <Clipboard size={16} />
+                Copy token
+              </button>
+            ) : null}
+          </div>
+          {lastToken ? (
+            <div className="token-box">
+              <span>One-time token</span>
+              <code>{lastToken}</code>
+            </div>
+          ) : null}
+        </Panel>
+
+        <Panel title="Security and Firewall">
+          <div className="warning-list">
+            {snapshot.security_warnings.map((warning) => (
+              <div className="warning-row" key={warning}>
+                <ShieldCheck size={16} />
+                <span>{warning}</span>
+              </div>
+            ))}
+          </div>
+          <div className="reason-list">
+            {snapshot.firewall_guidance.map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Connected Clients">
+        {snapshot.connected_clients.length === 0 ? (
+          <div className="empty-log-state">
+            <Monitor size={22} />
+            <strong>No paired clients yet.</strong>
+            <span>Create a pairing code and register a client to issue a bearer token.</span>
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table className="data-table remote-client-table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>Address</th>
+                  <th>Token</th>
+                  <th>Last Seen</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {snapshot.connected_clients.map((device) => (
+                  <RemoteClientRow device={device} key={device.id} onRevoke={revokeClient} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+
+      <div className="remote-broker-grid">
+        <Panel title="Authenticated Endpoints">
+          <div className="table-scroll">
+            <table className="data-table endpoint-table">
+              <thead>
+                <tr>
+                  <th>Method</th>
+                  <th>Path</th>
+                  <th>Auth</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {snapshot.endpoints.map((endpoint) => (
+                  <tr key={`${endpoint.method}-${endpoint.path}`}>
+                    <td>{endpoint.method}</td>
+                    <td>
+                      <code>{endpoint.path}</code>
+                    </td>
+                    <td>{endpoint.auth_required ? "Bearer" : "Open"}</td>
+                    <td>{endpoint.description}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+
+        <Panel title="Endpoint Preview">
+          <div className="broker-form-grid single">
+            <label>
+              <span>Endpoint</span>
+              <select value={previewEndpoint} onChange={(event) => setPreviewEndpoint(event.target.value)}>
+                {snapshot.endpoints.map((endpoint) => (
+                  <option value={endpoint.path} key={endpoint.path}>
+                    {endpoint.method} {endpoint.path}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Bearer token</span>
+              <input
+                value={previewToken}
+                onChange={(event) => setPreviewToken(event.target.value)}
+                placeholder="Paste paired-client token"
+              />
+            </label>
+          </div>
+          <div className="remote-broker-actions">
+            <button className="secondary-button" disabled={!liveEndpoint} onClick={runEndpointPreview} type="button">
+              <RefreshCw size={16} />
+              Preview endpoint
+            </button>
+          </div>
+          {previewResponse ? (
+            <pre className="json-preview">{JSON.stringify(previewResponse, null, 2)}</pre>
+          ) : (
+            <div className="empty-log-state compact">
+              <TerminalSquare size={20} />
+              <strong>No endpoint preview yet.</strong>
+              <span>Register a client, paste its token, then preview a broker route.</span>
+            </div>
+          )}
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function RemoteClientRow({
+  device,
+  onRevoke
+}: {
+  device: RemoteDevice;
+  onRevoke: (device: RemoteDevice) => void;
+}) {
+  return (
+    <tr>
+      <td>{device.name}</td>
+      <td>{device.address}</td>
+      <td>{device.token_fingerprint}</td>
+      <td>{formatTimestamp(device.last_seen_ms)}</td>
+      <td>
+        <span className={`health-pill ${device.revoked ? "error" : "healthy"}`}>
+          {device.revoked ? "Revoked" : "Paired"}
+        </span>
+      </td>
+      <td>
+        <button className="secondary-button table-action" disabled={device.revoked} onClick={() => onRevoke(device)} type="button">
+          Revoke
+        </button>
+      </td>
+    </tr>
   );
 }
 
@@ -3198,6 +3655,36 @@ function sourceKindLabel(kind: MetadataSourceKind) {
       return "MLX / Hugging Face";
     case "CustomJson":
       return "Custom JSON";
+  }
+}
+
+function remoteBrokerStatusLabel(status: RemoteBrokerStatus) {
+  switch (status) {
+    case "Running":
+      return "Running";
+    case "SharingDisabled":
+      return "Sharing disabled";
+    case "PlatformBlocked":
+      return "Windows only";
+    case "PausedOnline":
+      return "Paused, online";
+    case "PausedRejectingRequests":
+      return "Paused, rejecting";
+    case "StoppedByPause":
+      return "Stopped by pause";
+    case "Stopped":
+      return "Stopped";
+  }
+}
+
+function pausePolicyLabel(policy: BrokerPausePolicy) {
+  switch (policy) {
+    case "KeepOnline":
+      return "Keep broker online";
+    case "RejectNewRequests":
+      return "Reject new requests";
+    case "StopUntilResume":
+      return "Stop until resume";
   }
 }
 

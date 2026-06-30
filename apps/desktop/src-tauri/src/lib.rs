@@ -4,6 +4,7 @@ mod hardware_probe;
 mod installer_core;
 mod model_catalog;
 mod provider_core;
+mod remote_broker_core;
 mod router_core;
 mod updater_core;
 
@@ -28,6 +29,11 @@ use provider_core::{
     ProviderChatRequest, ProviderChatResponse, ProviderInstallPlan, ProviderLogEntry,
     ProviderManager, ProviderModel, ProviderSettings, ProviderSettingsPatch, ProviderStatus,
 };
+use remote_broker_core::{
+    remote_broker_file_path, BrokerEndpointData, BrokerEndpointRequest, BrokerEndpointResponse,
+    PairingRegistration, PairingStartResult, RegisterPairingRequest, RemoteBrokerManager,
+    RemoteBrokerSettings, RemoteBrokerSnapshot, RemoteDevice,
+};
 use router_core::{
     decide_route, run_router_test, RouterDecision, RouterDecisionRequest, RouterTestRequest,
     RouterTestResult,
@@ -47,6 +53,7 @@ type SharedAppState = Mutex<AppStateStore>;
 type SharedBackgroundState = Mutex<BackgroundManager>;
 type SharedInstallerState = Mutex<InstallerManager>;
 type SharedProviderState = Mutex<ProviderManager>;
+type SharedRemoteBrokerState = Mutex<RemoteBrokerManager>;
 type SharedUpdaterState = Mutex<UpdaterManager>;
 
 #[tauri::command]
@@ -63,6 +70,7 @@ fn pause_app(
     app_state: State<'_, SharedAppState>,
     background_state: State<'_, SharedBackgroundState>,
     provider_state: State<'_, SharedProviderState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
     request: PauseRequest,
 ) -> Result<AppStateSnapshot, String> {
     let mut store = app_state
@@ -70,6 +78,7 @@ fn pause_app(
         .map_err(|_| "app state lock poisoned".to_string())?;
     let snapshot = store.pause(request)?;
     pause_providers(&app, &provider_state, "App paused")?;
+    update_remote_broker_pause_state(&remote_broker_state, true)?;
     emit_app_state(&app, &snapshot);
     record_notification(
         &app,
@@ -92,6 +101,7 @@ fn resume_app(
     app_state: State<'_, SharedAppState>,
     background_state: State<'_, SharedBackgroundState>,
     provider_state: State<'_, SharedProviderState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
     source: PauseSource,
 ) -> Result<AppStateSnapshot, String> {
     let mut store = app_state
@@ -99,6 +109,7 @@ fn resume_app(
         .map_err(|_| "app state lock poisoned".to_string())?;
     let snapshot = store.resume(source)?;
     resume_providers(&app, &provider_state)?;
+    update_remote_broker_pause_state(&remote_broker_state, false)?;
     emit_app_state(&app, &snapshot);
     record_notification(
         &app,
@@ -681,6 +692,132 @@ fn apply_update_action(
     Ok(snapshot)
 }
 
+#[tauri::command]
+fn get_remote_broker_snapshot(
+    app_state: State<'_, SharedAppState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
+) -> Result<RemoteBrokerSnapshot, String> {
+    let mut app_store = app_state
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?;
+    let app_snapshot = app_store.snapshot()?;
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    Ok(broker.snapshot(app_snapshot.lifecycle_state == app_state::LifecycleState::Paused))
+}
+
+#[tauri::command]
+fn update_remote_broker_settings(
+    app: tauri::AppHandle,
+    app_state: State<'_, SharedAppState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
+    settings: RemoteBrokerSettings,
+) -> Result<RemoteBrokerSnapshot, String> {
+    let app_paused = is_app_paused(&app_state)?;
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    let snapshot = broker.update_settings(settings, app_paused)?;
+    emit_remote_broker_snapshot(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn start_remote_broker(
+    app: tauri::AppHandle,
+    app_state: State<'_, SharedAppState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
+    provider_state: State<'_, SharedProviderState>,
+) -> Result<RemoteBrokerSnapshot, String> {
+    let app_paused = is_app_paused(&app_state)?;
+    let data = collect_broker_endpoint_data(&provider_state)?;
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    let snapshot = broker.start(app_paused, data)?;
+    emit_remote_broker_snapshot(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn stop_remote_broker(
+    app: tauri::AppHandle,
+    app_state: State<'_, SharedAppState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
+) -> Result<RemoteBrokerSnapshot, String> {
+    let app_paused = is_app_paused(&app_state)?;
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    let snapshot = broker.stop(app_paused)?;
+    emit_remote_broker_snapshot(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn create_remote_pairing_code(
+    app: tauri::AppHandle,
+    app_state: State<'_, SharedAppState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
+) -> Result<PairingStartResult, String> {
+    let app_paused = is_app_paused(&app_state)?;
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    let result = broker.create_pairing_code(app_paused)?;
+    emit_remote_broker_snapshot(&app, &result.snapshot);
+    Ok(result)
+}
+
+#[tauri::command]
+fn register_remote_broker_client(
+    app: tauri::AppHandle,
+    app_state: State<'_, SharedAppState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
+    request: RegisterPairingRequest,
+) -> Result<PairingRegistration, String> {
+    let app_paused = is_app_paused(&app_state)?;
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    let registration = broker.register_pairing_client(request, app_paused)?;
+    emit_remote_broker_snapshot(&app, &registration.snapshot);
+    emit_remote_device_changed(&app, &registration.device);
+    Ok(registration)
+}
+
+#[tauri::command]
+fn revoke_remote_broker_client(
+    app: tauri::AppHandle,
+    app_state: State<'_, SharedAppState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
+    client_id: String,
+) -> Result<RemoteBrokerSnapshot, String> {
+    let app_paused = is_app_paused(&app_state)?;
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    let snapshot = broker.revoke_client(&client_id, app_paused)?;
+    emit_remote_broker_snapshot(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn preview_remote_broker_endpoint(
+    app_state: State<'_, SharedAppState>,
+    remote_broker_state: State<'_, SharedRemoteBrokerState>,
+    provider_state: State<'_, SharedProviderState>,
+    request: BrokerEndpointRequest,
+) -> Result<BrokerEndpointResponse, String> {
+    let app_paused = is_app_paused(&app_state)?;
+    let data = collect_broker_endpoint_data(&provider_state)?;
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    Ok(broker.preview_endpoint(request, app_paused, data))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -692,10 +829,12 @@ pub fn run() {
             let store = AppStateStore::load(state_file_path(&app_data_dir))?;
             let background = BackgroundManager::load(background_file_path(&app_data_dir))?;
             let updater = UpdaterManager::load(updater_file_path(&app_data_dir))?;
+            let remote_broker = RemoteBrokerManager::load(remote_broker_file_path(&app_data_dir))?;
             app.manage(Mutex::new(store));
             app.manage(Mutex::new(background));
             app.manage(Mutex::new(InstallerManager::seeded(app_data_dir)));
             app.manage(Mutex::new(ProviderManager::seeded()));
+            app.manage(Mutex::new(remote_broker));
             app.manage(Mutex::new(updater));
             install_pause_menu_and_tray(app.handle())?;
             Ok(())
@@ -742,7 +881,15 @@ pub fn run() {
             get_updater_snapshot,
             update_updater_settings,
             check_updates_now,
-            apply_update_action
+            apply_update_action,
+            get_remote_broker_snapshot,
+            update_remote_broker_settings,
+            start_remote_broker,
+            stop_remote_broker,
+            create_remote_pairing_code,
+            register_remote_broker_client,
+            revoke_remote_broker_client,
+            preview_remote_broker_endpoint
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local AI Router desktop shell");
@@ -782,6 +929,56 @@ fn emit_updater_snapshot(app: &tauri::AppHandle, snapshot: &UpdaterSnapshot) {
 
 fn emit_update_candidate(app: &tauri::AppHandle, candidate: &UpdateCandidate) {
     let _ = app.emit("update-found", candidate);
+}
+
+fn emit_remote_broker_snapshot(app: &tauri::AppHandle, snapshot: &RemoteBrokerSnapshot) {
+    let _ = app.emit("remote-broker-snapshot-changed", snapshot);
+}
+
+fn emit_remote_device_changed(app: &tauri::AppHandle, device: &RemoteDevice) {
+    let _ = app.emit("remote-device-changed", device);
+}
+
+fn is_app_paused(app_state: &State<'_, SharedAppState>) -> Result<bool, String> {
+    let mut app_store = app_state
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?;
+    let snapshot = app_store.snapshot()?;
+    Ok(snapshot.lifecycle_state == app_state::LifecycleState::Paused)
+}
+
+fn update_remote_broker_pause_state(
+    remote_broker_state: &State<'_, SharedRemoteBrokerState>,
+    app_paused: bool,
+) -> Result<(), String> {
+    let mut broker = remote_broker_state
+        .lock()
+        .map_err(|_| "remote broker state lock poisoned".to_string())?;
+    broker.update_pause_state(app_paused);
+    Ok(())
+}
+
+fn collect_broker_endpoint_data(
+    provider_state: &State<'_, SharedProviderState>,
+) -> Result<BrokerEndpointData, String> {
+    let hardware = probe_live_specs().or_else(|_| load_fixture("windows-gtx-1060-30gb"))?;
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let provider_statuses = providers.statuses();
+    let mut models = Vec::new();
+    for status in &provider_statuses {
+        if status.running && !status.paused {
+            if let Ok(provider_models) = providers.list_models(&status.definition.id) {
+                models.extend(provider_models);
+            }
+        }
+    }
+    Ok(BrokerEndpointData {
+        hardware,
+        provider_statuses,
+        models,
+    })
 }
 
 fn record_notification(
