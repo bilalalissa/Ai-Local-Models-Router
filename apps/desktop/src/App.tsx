@@ -65,6 +65,7 @@ import {
   type PreferenceTag,
   type ProviderKind,
   type UseCase,
+  getModelCatalog,
   preferenceOptions,
   providerOptions,
   scoreModels,
@@ -94,6 +95,15 @@ import {
   subscribeProviderHealth,
   updateProviderSettings
 } from "./providers";
+import {
+  type RouteCandidate,
+  type RouterDecision,
+  type RouterMode,
+  type RouterTestResult,
+  defaultRouterThresholds,
+  decideRouterRoute,
+  runRouterTestPrompt
+} from "./router";
 
 type PageId =
   | "dashboard"
@@ -371,7 +381,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 7 installer</span>
+          <span>Stage 8 router</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -1901,16 +1911,117 @@ function RouterShell({
   onPause: (source: PauseSource, action?: PauseAction) => Promise<void>;
   onResume: (source: PauseSource) => Promise<void>;
 }) {
+  const [hardware, setHardware] = useState<HardwareSpecs | null>(null);
+  const [providers, setProviders] = useState<ProviderStatus[]>([]);
+  const [models, setModels] = useState<Array<{ id: string; display_name: string }>>([]);
+  const [mode, setMode] = useState<RouterMode>("Auto");
+  const [useCase, setUseCase] = useState<UseCase>("GeneralChat");
+  const [manualModelId, setManualModelId] = useState("phi-3-5-mini-q4");
+  const [forcedModelId, setForcedModelId] = useState("qwen2-5-coder-7b-mlx");
+  const [installedOnly, setInstalledOnly] = useState(false);
+  const [thresholds, setThresholds] = useState(defaultRouterThresholds);
+  const [decision, setDecision] = useState<RouterDecision | null>(null);
+  const [testPrompt, setTestPrompt] = useState("Explain how transformers work in large language models.");
+  const [testResult, setTestResult] = useState<RouterTestResult | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Loading router inputs...");
+  const [error, setError] = useState<string | null>(null);
   const isPaused = appState.lifecycle_state === "Paused";
-  const modes = [
-    ["Auto", Route],
-    ["Manual", SlidersHorizontal],
-    ["Forced", ShieldCheck],
-    ["Remote preferred", Network],
-    ["Local only", Monitor],
-    ["Remote only", Cloud],
-    ["Paused", Pause]
-  ] as const;
+
+  useEffect(() => {
+    let ignore = false;
+    Promise.all([refreshHardwareSpecs(), refreshProviderHealth(), getModelCatalog()])
+      .then(([nextHardware, nextProviders, nextModels]) => {
+        if (ignore) return;
+        setHardware(nextHardware);
+        setProviders(nextProviders);
+        setModels(nextModels.map((model) => ({ id: model.id, display_name: model.display_name })));
+        setStatusMessage("Router inputs loaded.");
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatusMessage("Router inputs failed to load.");
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hardware || providers.length === 0) return;
+    let ignore = false;
+    decideRouterRoute({
+      hardware,
+      provider_statuses: providers,
+      mode: isPaused ? "Paused" : mode,
+      use_case: useCase,
+      preference_tags: ["Balanced"],
+      manual_model_id: manualModelId || null,
+      forced_model_id: forcedModelId || null,
+      installed_only: installedOnly,
+      app_paused: isPaused,
+      thresholds
+    })
+      .then((nextDecision) => {
+        if (ignore) return;
+        setDecision(nextDecision);
+        setStatusMessage(nextDecision.selected ? "Router decision updated." : "No executable route selected.");
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatusMessage("Router decision failed.");
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [forcedModelId, hardware, installedOnly, isPaused, manualModelId, mode, providers, thresholds, useCase]);
+
+  const modeCards: Array<[RouterMode, string, typeof Route]> = [
+    ["Auto", "Auto", Route],
+    ["Manual", "Manual", SlidersHorizontal],
+    ["Forced", "Forced", ShieldCheck],
+    ["RemotePreferred", "Remote preferred", Network],
+    ["LocalOnly", "Local only", Monitor],
+    ["RemoteOnly", "Remote only", Cloud],
+    ["Paused", "Paused", Pause]
+  ];
+
+  const activeMode = isPaused ? "Paused" : mode;
+  const selected = decision?.selected;
+
+  const handleThresholdChange = useCallback((name: keyof typeof defaultRouterThresholds, value: number) => {
+    setThresholds((current) => ({ ...current, [name]: value }));
+  }, []);
+
+  const handleRunPrompt = useCallback(async () => {
+    if (!decision) return;
+    setError(null);
+    try {
+      const result = await runRouterTestPrompt({ decision, prompt: testPrompt });
+      setTestResult(result);
+      setStatusMessage(result.message);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Router test prompt failed.");
+    }
+  }, [decision, testPrompt]);
+
+  if (!hardware || providers.length === 0 || !decision) {
+    return (
+      <div className="router-shell">
+        <Panel title="Router">
+          <div className="loading-state">
+            <Route size={22} />
+            <strong>{statusMessage}</strong>
+            {error ? <span>{error}</span> : <span>Preparing hardware, providers, and model scores.</span>}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
 
   return (
     <div className="router-shell">
@@ -1925,7 +2036,7 @@ function RouterShell({
           <span>
             {isPaused
               ? "Automation, update checks, routing changes, and remote discovery are suspended."
-              : "Use pause controls to suspend router automation before Stage 8 wiring."}
+              : statusMessage}
           </span>
         </div>
         <button className="secondary-button" type="button">
@@ -1942,14 +2053,12 @@ function RouterShell({
 
       <Panel title="Routing mode">
         <div className="mode-grid">
-          {modes.map(([label, Icon]) => (
+          {modeCards.map(([value, label, Icon]) => (
             <button
-              className={
-                (isPaused && label === "Paused") || (!isPaused && label === "Auto")
-                  ? "mode-card active"
-                  : "mode-card"
-              }
-              key={label}
+              className={activeMode === value ? "mode-card active" : "mode-card"}
+              disabled={isPaused && value !== "Paused"}
+              key={value}
+              onClick={() => setMode(value)}
               type="button"
             >
               <Icon size={22} />
@@ -1957,66 +2066,111 @@ function RouterShell({
             </button>
           ))}
         </div>
-        <p className="fine-print">
-          {isPaused
-            ? "Routing is paused. No automatic decisions or changes will be made."
-            : "Routing controls are non-functional until Stage 8."}
-        </p>
+        <div className="router-control-row">
+          <select aria-label="Router use case" onChange={(event) => setUseCase(event.target.value as UseCase)} value={useCase}>
+            {useCaseOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <select aria-label="Manual model" onChange={(event) => setManualModelId(event.target.value)} value={manualModelId}>
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.display_name}
+              </option>
+            ))}
+          </select>
+          <select aria-label="Forced model" onChange={(event) => setForcedModelId(event.target.value)} value={forcedModelId}>
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.display_name}
+              </option>
+            ))}
+          </select>
+          <label className="compact-check">
+            <input checked={installedOnly} onChange={(event) => setInstalledOnly(event.target.checked)} type="checkbox" />
+            Installed only
+          </label>
+        </div>
+        {error ? <div className="inline-error">{error}</div> : null}
       </Panel>
 
       <div className="router-columns">
         <Panel title="Active decision">
-          <StatusLine label="Last active model" value="Qwen3 8B" />
-          <StatusLine label="Last router decision" value="Used local model (Auto mode)" />
+          <StatusLine label="Selected model" value={selected?.model_name ?? "No route"} />
+          <StatusLine label="Provider" value={selected?.provider_name ?? "None"} tone={selected ? "green" : undefined} />
+          <StatusLine label="Mode" value={decision.mode} />
+          <StatusLine label="Score" value={selected ? `${selected.score} / ${selected.label}` : "Not available"} />
+          <StatusLine label="Executable" value={decision.can_execute ? "Yes" : "No"} />
           <div className="fallback-list">
             <span>Fallback candidates</span>
-            <ol>
-              <li>Llama 3.1 8B (Ollama)</li>
-              <li>Phi-3.5 Mini (Ollama)</li>
-              <li>Qwen2.5-Coder 7B (LM Studio)</li>
-            </ol>
+            {decision.fallback_chain.length > 0 ? (
+              <ol>
+                {decision.fallback_chain.slice(0, 4).map((candidate) => (
+                  <li key={`${candidate.provider_id}-${candidate.model_id}`}>
+                    {candidate.model_name} ({candidate.provider_name}, {candidate.score})
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <strong>No fallback candidates</strong>
+            )}
           </div>
         </Panel>
 
         <Panel title="Router thresholds">
-          <Threshold label="RAM usage (max)" value="85%" />
-          <Threshold label="CPU usage (max)" value="80%" />
-          <Threshold label="GPU VRAM usage (max)" value="90%" />
-          <Threshold label="Latency (max)" value="1500 ms" />
-          <Threshold label="Upgrade cooldown" value="10 min" />
+          <RouterSlider label="Minimum score" max={100} min={0} onChange={(value) => handleThresholdChange("min_score", value)} suffix="" value={thresholds.min_score} />
+          <RouterSlider label="CPU max" max={100} min={0} onChange={(value) => handleThresholdChange("max_cpu_percent", value)} suffix="%" value={thresholds.max_cpu_percent} />
+          <RouterSlider label="Memory max" max={100} min={0} onChange={(value) => handleThresholdChange("max_memory_percent", value)} suffix="%" value={thresholds.max_memory_percent} />
+          <RouterSlider label="GPU max" max={100} min={0} onChange={(value) => handleThresholdChange("max_gpu_percent", value)} suffix="%" value={thresholds.max_gpu_percent} />
+          <RouterSlider label="Latency max" max={3000} min={100} onChange={(value) => handleThresholdChange("max_latency_ms", value)} suffix=" ms" value={thresholds.max_latency_ms} />
         </Panel>
 
-        <Panel title="Suspended automation">
-          <SuspendedRow label="Pending routing changes" value={String(appState.suspended_tasks.routing_changes)} />
-          <SuspendedRow label="Update checks" value={String(appState.suspended_tasks.update_checks)} />
-          <SuspendedRow label="Model pulls / updates" value={String(appState.suspended_tasks.model_installs)} />
-          <SuspendedRow label="Remote discovery" value={String(appState.suspended_tasks.remote_discovery)} />
-          <SuspendedRow label="Metric collection" value={String(appState.suspended_tasks.health_polling)} />
-          <SuspendedRow label="Total suspended tasks" value={String(totalSuspended(appState))} />
+        <Panel title="Decision reasons">
+          <div className="reason-list">
+            {decision.reasons.map((reason) => (
+              <span key={reason}>{reason}</span>
+            ))}
+          </div>
+          <div className="blocker-list">
+            <strong>Rejected candidates</strong>
+            <span>{decision.rejected.length} below thresholds, blocked, or too slow.</span>
+          </div>
         </Panel>
       </div>
 
       <Panel title="Test prompt">
         <div className="test-prompt-shell">
           <textarea
-            aria-label="Test prompt placeholder"
-            disabled
-            placeholder="Explain how transformers work in large language models."
+            aria-label="Router test prompt"
+            onChange={(event) => setTestPrompt(event.target.value)}
+            value={testPrompt}
           />
           <div className="test-actions">
             <button
-              className={isPaused ? "secondary-button" : "ghost-button"}
-              disabled={!isPaused}
+              className="secondary-button"
+              disabled={!decision.can_execute}
+              onClick={handleRunPrompt}
               type="button"
-              onClick={() => onResume("Router")}
             >
-              {isPaused ? "Resume to run" : "Run available in Stage 8"}
+              <MessageSquare size={16} />
+              Run routed test
             </button>
-            <button className="secondary-button" type="button">
-              Run once while paused
-            </button>
+            {isPaused ? (
+              <button className="resume-button" type="button" onClick={() => onResume("Router")}>
+                <Play size={16} />
+                Resume router
+              </button>
+            ) : null}
           </div>
         </div>
+        {testResult ? (
+          <div className="chat-response">
+            <strong>{testResult.message}</strong>
+            <span>{testResult.response?.response ?? "No provider response."}</span>
+          </div>
+        ) : null}
       </Panel>
     </div>
   );
@@ -2270,6 +2424,39 @@ function ScoreInputBar({ label, value }: { label: string; value: number }) {
   );
 }
 
+function RouterSlider({
+  label,
+  value,
+  min,
+  max,
+  suffix,
+  onChange
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  suffix: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="router-slider">
+      <span>{label}</span>
+      <input
+        max={max}
+        min={min}
+        onChange={(event) => onChange(Number(event.target.value))}
+        type="range"
+        value={value}
+      />
+      <strong>
+        {value}
+        {suffix}
+      </strong>
+    </label>
+  );
+}
+
 function StatusLine({
   label,
   value,
@@ -2329,18 +2516,6 @@ function ActionButton({
       <Icon size={21} />
       <span>{label}</span>
     </button>
-  );
-}
-
-function Threshold({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="threshold-row">
-      <span>{label}</span>
-      <div className="threshold-control">
-        <span className="fake-slider" />
-        <strong>{value}</strong>
-      </div>
-    </div>
   );
 }
 

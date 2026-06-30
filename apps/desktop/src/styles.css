@@ -619,6 +619,27 @@ button:disabled {
   color: #1f68c9;
 }
 
+.mode-card:disabled {
+  cursor: not-allowed;
+}
+
+.router-control-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr)) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.router-control-row select {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: #f8fafc;
+  color: var(--text);
+  font: inherit;
+}
+
 .router-columns {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -652,6 +673,27 @@ button:disabled {
   gap: 12px;
 }
 
+.router-slider {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 74px;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.router-slider input {
+  width: 100%;
+  accent-color: var(--blue);
+}
+
+.router-slider strong {
+  color: var(--text);
+  text-align: right;
+}
+
 .fake-slider {
   display: block;
   width: 92px;
@@ -673,7 +715,8 @@ button:disabled {
   border-radius: 7px;
   padding: 14px;
   background: #f8fafc;
-  color: var(--muted);
+  color: var(--text);
+  font: inherit;
 }
 
 .test-actions {
@@ -1557,6 +1600,7 @@ button:disabled {
   .hardware-toolbar,
   .hardware-table-grid,
   .fit-toolbar,
+  .router-control-row,
   .provider-toolbar,
   .provider-chat-form,
   .installer-toolbar {
@@ -1646,6 +1690,7 @@ button:disabled {
   .fit-toolbar,
   .provider-toolbar,
   .provider-chat-form,
+  .router-control-row,
   .hardware-table-grid,
   .test-prompt-shell {
     grid-template-columns: 1fr;

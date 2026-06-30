@@ -3,6 +3,7 @@ mod hardware_probe;
 mod installer_core;
 mod model_catalog;
 mod provider_core;
+mod router_core;
 
 use app_state::{
     state_file_path, AppStateSnapshot, AppStateStore, PauseHistoryEntry, PauseRequest,
@@ -20,6 +21,10 @@ use model_catalog::{
 use provider_core::{
     ProviderChatRequest, ProviderChatResponse, ProviderInstallPlan, ProviderLogEntry,
     ProviderManager, ProviderModel, ProviderSettings, ProviderSettingsPatch, ProviderStatus,
+};
+use router_core::{
+    decide_route, run_router_test, RouterDecision, RouterDecisionRequest, RouterTestRequest,
+    RouterTestResult,
 };
 use std::sync::Mutex;
 use tauri::{
@@ -126,6 +131,24 @@ fn get_model_catalog() -> Result<Vec<ModelEntry>, String> {
 #[tauri::command]
 fn score_models(request: ScoreModelCatalogRequest) -> Result<Vec<CompatibilityResult>, String> {
     score_model_catalog(request)
+}
+
+#[tauri::command]
+fn decide_router_route(request: RouterDecisionRequest) -> Result<RouterDecision, String> {
+    decide_route(request)
+}
+
+#[tauri::command]
+fn run_router_test_prompt(
+    provider_state: State<'_, SharedProviderState>,
+    request: RouterTestRequest,
+) -> Result<RouterTestResult, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    Ok(run_router_test(request, |chat_request| {
+        providers.chat(chat_request)
+    }))
 }
 
 #[tauri::command]
@@ -405,6 +428,8 @@ pub fn run() {
             export_hardware_specs,
             get_model_catalog,
             score_models,
+            decide_router_route,
+            run_router_test_prompt,
             list_install_plans,
             get_install_state,
             start_install_run,

@@ -6,15 +6,18 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 7: runtime and model installation flow. The
+This repository is currently at Stage 8: router model selection. The
 Tauri desktop shell exists, exposes persisted pause/resume state, includes
 native hardware probing and specs export, scores a seeded local model catalog,
 includes local HTTP adapters for Ollama, LM Studio, custom OpenAI-compatible
 servers, MLX-LM, and llama.cpp, and now includes a dry-run runtime/model
 installer with consent, command hook previews, app-managed folders, progress,
-logs, pause, resume, and cancel. Model routing execution, real
-installers/downloads, remote broker behavior, and model/update automation are
-intentionally deferred to later approved stages.
+logs, pause, resume, and cancel. Router decisions now support Auto, Manual,
+Forced, Local only, Remote preferred placeholder, Remote only placeholder, and
+Paused modes with thresholds, fallback chains, decision reasons, and a routed
+test prompt panel. Real installers/downloads, remote broker behavior,
+notifications, and model/update automation are intentionally deferred to later
+approved stages.
 
 ## Stage Gate Rule
 
@@ -70,6 +73,10 @@ start the next implementation stage until the user explicitly approves it.
   records, consent-gated recommended setup UI, app-managed runtime/model/cache
   folders, progress, logs, pause/resume/cancel, and Apple Silicon, Intel Mac,
   and Windows x64 install plans.
+- Stage 8 router flow: Rust `router_core`, Auto/Manual/Forced/Local only/Remote
+  preferred/Remote only/Paused modes, compatibility thresholds, fallback and
+  degrade/upgrade reasons, routed test prompt execution for local providers, and
+  Router page controls.
 
 ## Planned Stack
 
@@ -119,9 +126,11 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 7 note: the installer is dry-run only. It records realistic command hooks
+Stage 8 note: the installer is dry-run only. It records realistic command hooks
 and app-managed folder paths, but never executes commands or downloads model
-weights. Router decisions, updater checks, notifications, and remote broker
+weights. Router decisions and routed test prompts exist for local providers.
+Remote preferred and remote-only routing remain explicit placeholders until the
+remote broker/client stages. Updater checks, notifications, and remote broker
 workers do not exist yet.
 
 ## Visual Baseline
@@ -148,7 +157,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 5 - Provider Adapter Layer With Mocked Providers
 - [x] Stage 6 - Real Local Provider Adapters
 - [x] Stage 7 - Runtime and Model Installation Flow
-- [ ] Stage 8 - Router Auto/Manual/Forced Model Selection
+- [x] Stage 8 - Router Auto/Manual/Forced Model Selection
 - [ ] Stage 9 - Notifications and Background Behavior
 - [ ] Stage 10 - Model Update Metadata Checker
 - [ ] Stage 11 - Windows Remote Provider Broker
@@ -248,7 +257,7 @@ marked as a stub.
 - Use mocks for tests. Do not download real model weights in tests.
 - Stop and ask for approval.
 
-### Stage 8 - Router Auto/Manual/Forced Model Selection
+### [x] Stage 8 - Router Auto/Manual/Forced Model Selection
 
 - Implement `router_core`.
 - Add Auto, Manual, Forced, Local only, Remote preferred placeholder, Remote only
