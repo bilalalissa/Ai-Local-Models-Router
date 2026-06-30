@@ -1,0 +1,20 @@
+{
+  "source_name": "MLX Hugging Face metadata fixture",
+  "checked_at_ms": 1782794000000,
+  "repositories": [
+    {
+      "model_id": "qwen2-5-coder-7b-mlx",
+      "repo": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
+      "current_revision": "a13f4c2",
+      "latest_revision": "f92b8a1",
+      "release_notes": "New MLX weights with lower memory spikes during coding prompts."
+    },
+    {
+      "model_id": "mistral-7b-q4",
+      "repo": "mlx-community/Mistral-7B-Instruct-v0.3-4bit",
+      "current_revision": "54aab91",
+      "latest_revision": "54aab91",
+      "release_notes": "No update available in fixture."
+    }
+  ]
+}

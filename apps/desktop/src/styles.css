@@ -1421,6 +1421,100 @@ button:disabled {
   margin: 0 auto;
 }
 
+.updates-page {
+  display: grid;
+  gap: 16px;
+  max-width: 1340px;
+  margin: 0 auto;
+}
+
+.updates-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.updates-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
+  gap: 16px;
+}
+
+.update-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.update-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfe;
+}
+
+.update-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.update-card-heading,
+.version-row,
+.update-actions,
+.reminder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.update-card-heading {
+  justify-content: space-between;
+}
+
+.update-card-heading div {
+  display: grid;
+  gap: 4px;
+}
+
+.update-card-heading div span,
+.version-row span,
+.reminder-row span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.version-row {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #f8fafc;
+  font-size: 13px;
+}
+
+.update-actions {
+  flex-wrap: wrap;
+}
+
+.reminder-row {
+  margin-top: 14px;
+}
+
+.reminder-row input {
+  width: 76px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: #f8fafc;
+  color: var(--text);
+  font: inherit;
+}
+
 .installer-toolbar {
   display: grid;
   grid-template-columns: minmax(280px, 1fr) minmax(280px, auto) auto;
@@ -1634,7 +1728,9 @@ button:disabled {
   .fit-content-grid,
   .provider-card-grid,
   .provider-detail-grid,
-  .installer-grid {
+  .installer-grid,
+  .updates-grid,
+  .update-card-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1658,13 +1754,15 @@ button:disabled {
   .router-control-row,
   .provider-toolbar,
   .provider-chat-form,
+  .updates-toolbar,
   .installer-toolbar {
     grid-template-columns: 1fr;
   }
 
   .fit-content-grid,
   .provider-detail-grid,
-  .installer-grid {
+  .installer-grid,
+  .updates-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1741,9 +1839,12 @@ button:disabled {
   .provider-detail-grid,
   .settings-grid,
   .background-settings-grid,
+  .updates-grid,
+  .update-card-grid,
   .empty-grid,
   .hardware-toolbar,
   .fit-toolbar,
+  .updates-toolbar,
   .provider-toolbar,
   .provider-chat-form,
   .router-control-row,

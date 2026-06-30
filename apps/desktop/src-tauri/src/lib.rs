@@ -5,6 +5,7 @@ mod installer_core;
 mod model_catalog;
 mod provider_core;
 mod router_core;
+mod updater_core;
 
 use app_state::{
     state_file_path, AppStateSnapshot, AppStateStore, PauseHistoryEntry, PauseRequest,
@@ -37,11 +38,16 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager, State,
 };
+use updater_core::{
+    updater_file_path, CheckUpdatesRequest, UpdateActionRequest, UpdateCandidate, UpdaterManager,
+    UpdaterSettings, UpdaterSnapshot,
+};
 
 type SharedAppState = Mutex<AppStateStore>;
 type SharedBackgroundState = Mutex<BackgroundManager>;
 type SharedInstallerState = Mutex<InstallerManager>;
 type SharedProviderState = Mutex<ProviderManager>;
+type SharedUpdaterState = Mutex<UpdaterManager>;
 
 #[tauri::command]
 fn get_app_state(app_state: State<'_, SharedAppState>) -> Result<AppStateSnapshot, String> {
@@ -616,6 +622,65 @@ fn preview_provider_install_plan(
     providers.install_plan(&provider_id)
 }
 
+#[tauri::command]
+fn get_updater_snapshot(
+    updater_state: State<'_, SharedUpdaterState>,
+) -> Result<UpdaterSnapshot, String> {
+    let updater = updater_state
+        .lock()
+        .map_err(|_| "updater state lock poisoned".to_string())?;
+    Ok(updater.snapshot())
+}
+
+#[tauri::command]
+fn update_updater_settings(
+    app: tauri::AppHandle,
+    updater_state: State<'_, SharedUpdaterState>,
+    settings: UpdaterSettings,
+) -> Result<UpdaterSnapshot, String> {
+    let mut updater = updater_state
+        .lock()
+        .map_err(|_| "updater state lock poisoned".to_string())?;
+    let snapshot = updater.update_settings(settings)?;
+    let _ = app.emit("settings-changed", &snapshot.settings);
+    let _ = app.emit("updater-snapshot-changed", &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn check_updates_now(
+    app: tauri::AppHandle,
+    app_state: State<'_, SharedAppState>,
+    updater_state: State<'_, SharedUpdaterState>,
+    mut request: CheckUpdatesRequest,
+) -> Result<UpdaterSnapshot, String> {
+    let mut store = app_state
+        .lock()
+        .map_err(|_| "app state lock poisoned".to_string())?;
+    let app_snapshot = store.snapshot()?;
+    request.app_paused = app_snapshot.lifecycle_state == app_state::LifecycleState::Paused;
+    let mut updater = updater_state
+        .lock()
+        .map_err(|_| "updater state lock poisoned".to_string())?;
+    let snapshot = updater.check_updates(request)?;
+    emit_updater_snapshot(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn apply_update_action(
+    app: tauri::AppHandle,
+    updater_state: State<'_, SharedUpdaterState>,
+    request: UpdateActionRequest,
+) -> Result<UpdaterSnapshot, String> {
+    let mut updater = updater_state
+        .lock()
+        .map_err(|_| "updater state lock poisoned".to_string())?;
+    let snapshot = updater.apply_action(request)?;
+    emit_updater_snapshot(&app, &snapshot);
+    Ok(snapshot)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -626,10 +691,12 @@ pub fn run() {
                 .map_err(|err| format!("failed to resolve app data directory: {err}"))?;
             let store = AppStateStore::load(state_file_path(&app_data_dir))?;
             let background = BackgroundManager::load(background_file_path(&app_data_dir))?;
+            let updater = UpdaterManager::load(updater_file_path(&app_data_dir))?;
             app.manage(Mutex::new(store));
             app.manage(Mutex::new(background));
             app.manage(Mutex::new(InstallerManager::seeded(app_data_dir)));
             app.manage(Mutex::new(ProviderManager::seeded()));
+            app.manage(Mutex::new(updater));
             install_pause_menu_and_tray(app.handle())?;
             Ok(())
         })
@@ -671,7 +738,11 @@ pub fn run() {
             get_background_snapshot,
             update_background_settings,
             run_background_tick,
-            send_test_notification
+            send_test_notification,
+            get_updater_snapshot,
+            update_updater_settings,
+            check_updates_now,
+            apply_update_action
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local AI Router desktop shell");
@@ -700,6 +771,17 @@ fn emit_install_state(app: &tauri::AppHandle, state: &InstallRunState) {
 fn emit_notification_event(app: &tauri::AppHandle, event: &NotificationEvent) {
     let _ = app.emit("notification-event", event);
     let _ = app.emit("log-appended", event);
+}
+
+fn emit_updater_snapshot(app: &tauri::AppHandle, snapshot: &UpdaterSnapshot) {
+    let _ = app.emit("updater-snapshot-changed", snapshot);
+    for candidate in &snapshot.candidates {
+        emit_update_candidate(app, candidate);
+    }
+}
+
+fn emit_update_candidate(app: &tauri::AppHandle, candidate: &UpdateCandidate) {
+    let _ = app.emit("update-found", candidate);
 }
 
 fn record_notification(

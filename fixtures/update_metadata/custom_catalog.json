@@ -1,0 +1,20 @@
+{
+  "source_name": "Custom JSON update catalog fixture",
+  "checked_at_ms": 1782794000000,
+  "updates": [
+    {
+      "model_id": "qwen3-8b-q4",
+      "current_version": "2026.02-q4_k_m",
+      "latest_version": "2026.06-q4_k_m",
+      "source_url": "file://fixtures/update_metadata/custom_catalog.json",
+      "release_notes": "Custom catalog marks this as the preferred balanced local chat refresh."
+    },
+    {
+      "model_id": "llama-3-1-70b-q4",
+      "current_version": "2026.01-q4_k_m",
+      "latest_version": "2026.06-q4_k_m",
+      "source_url": "file://fixtures/update_metadata/custom_catalog.json",
+      "release_notes": "Large model update remains constrained on smaller local machines."
+    }
+  ]
+}

@@ -6,7 +6,7 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 9: notifications and background behavior. The
+This repository is currently at Stage 10: model update metadata checker. The
 Tauri desktop shell exists, exposes persisted pause/resume state, includes
 native hardware probing and specs export, scores a seeded local model catalog,
 includes local HTTP adapters for Ollama, LM Studio, custom OpenAI-compatible
@@ -19,8 +19,12 @@ test prompt panel. Notifications and background behavior now include a native
 menu/tray path, notification settings, launch-at-login/start-provider-at-login
 settings, a pause-aware background task manager, notification event history, and
 events for pause/resume, install completion, router changes, provider errors,
-and forced-model pressure. Real installers/downloads, remote broker behavior,
-and model/update automation are intentionally deferred to later approved stages.
+and forced-model pressure. Model update metadata checks now use fixture-only
+Ollama, MLX/Hugging Face, and custom JSON sources with compatibility labels,
+history, ignore/remind-later/install/install-and-switch actions, privacy mode,
+and pause-aware scheduled checks. Real installers/downloads, remote broker
+behavior, and remote model automation are intentionally deferred to later
+approved stages.
 
 ## Stage Gate Rule
 
@@ -84,6 +88,10 @@ start the next implementation stage until the user explicitly approves it.
   persisted notification/background/autostart settings, native menu/tray setup,
   notification events, frontend desktop notification bridge, pause-aware
   background task table, Settings controls, and notification logs.
+- Stage 10 updater flow: Rust `updater_core`, fixture-only Ollama,
+  MLX/Hugging Face, and custom JSON metadata sources, compatibility-scored
+  update candidates, privacy and pause gates, update cards, history, ignore,
+  remind later, dry-run install, and dry-run install-and-switch actions.
 
 ## Planned Stack
 
@@ -133,12 +141,12 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 9 note: the installer is dry-run only. It records realistic command hooks
+Stage 10 note: the installer is dry-run only. It records realistic command hooks
 and app-managed folder paths, but never executes commands or downloads model
 weights. Router decisions and routed test prompts exist for local providers.
 Remote preferred and remote-only routing remain explicit placeholders until the
-remote broker/client stages. Stage 9 adds notification and background task
-plumbing; Stage 10 updater metadata checks and Stages 11-12 remote broker/client
+remote broker/client stages. Stage 10 update checks read local fixtures only;
+live metadata calls, real downloads, and Stages 11-12 remote broker/client
 workers do not exist yet.
 
 ## Visual Baseline
@@ -167,7 +175,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 7 - Runtime and Model Installation Flow
 - [x] Stage 8 - Router Auto/Manual/Forced Model Selection
 - [x] Stage 9 - Notifications and Background Behavior
-- [ ] Stage 10 - Model Update Metadata Checker
+- [x] Stage 10 - Model Update Metadata Checker
 - [ ] Stage 11 - Windows Remote Provider Broker
 - [ ] Stage 12 - Mac Remote Client
 - [ ] Stage 13 - Packaging and Installers
@@ -288,7 +296,7 @@ marked as a stub.
   OS-native behavior.
 - Stop and ask for approval.
 
-### Stage 10 - Model Update Metadata Checker
+### [x] Stage 10 - Model Update Metadata Checker
 
 - Implement `updater`.
 - Add metadata source abstraction.

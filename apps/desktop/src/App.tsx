@@ -1,8 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  Ban,
   Bell,
   Bot,
+  Clock,
   Clipboard,
   Cloud,
   Cpu,
@@ -116,6 +118,18 @@ import {
   decideRouterRoute,
   runRouterTestPrompt
 } from "./router";
+import {
+  type MetadataSourceKind,
+  type UpdateActionKind,
+  type UpdateCandidate,
+  type UpdaterSettings,
+  type UpdaterSnapshot,
+  applyUpdateAction,
+  checkUpdatesNow,
+  getUpdaterSnapshot,
+  subscribeUpdaterSnapshot,
+  updateUpdaterSettings
+} from "./updater";
 
 type PageId =
   | "dashboard"
@@ -339,7 +353,7 @@ export default function App() {
           ) : activePage === "providers" ? (
             <ProvidersPage appState={appState} />
           ) : activePage === "updates" ? (
-            <InstallerPage />
+            <UpdatesPage appState={appState} />
           ) : activePage === "router" ? (
             <RouterShell appState={appState} onPause={handlePause} onResume={handleResume} />
           ) : activePage === "settings" ? (
@@ -403,7 +417,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 9 background</span>
+          <span>Stage 10 updater</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -1679,6 +1693,322 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
   );
 }
 
+function UpdatesPage({ appState }: { appState: AppStateSnapshot }) {
+  const [snapshot, setSnapshot] = useState<UpdaterSnapshot | null>(null);
+  const [hardware, setHardware] = useState<HardwareSpecs | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Loading update metadata settings...");
+  const [error, setError] = useState<string | null>(null);
+  const isPaused = appState.lifecycle_state === "Paused";
+
+  useEffect(() => {
+    let ignore = false;
+    let unlisten: (() => void) | undefined;
+    Promise.all([getUpdaterSnapshot(), refreshHardwareSpecs()])
+      .then(([nextSnapshot, nextHardware]) => {
+        if (ignore) return;
+        setSnapshot(nextSnapshot);
+        setHardware(nextHardware);
+        setStatusMessage(nextSnapshot.message);
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatusMessage("Update metadata failed to load.");
+      });
+    subscribeUpdaterSnapshot((nextSnapshot) => {
+      setSnapshot(nextSnapshot);
+      setStatusMessage(nextSnapshot.message);
+    }).then((unsubscribe) => {
+      unlisten = unsubscribe;
+      if (ignore) unsubscribe();
+    });
+
+    return () => {
+      ignore = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const runCheck = useCallback(
+    async (manual: boolean) => {
+      if (!hardware) return;
+      setError(null);
+      try {
+        const nextSnapshot = await checkUpdatesNow({
+          hardware,
+          app_paused: isPaused,
+          manual
+        });
+        setSnapshot(nextSnapshot);
+        setStatusMessage(nextSnapshot.message);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Update check failed.");
+      }
+    },
+    [hardware, isPaused]
+  );
+
+  const updateSetting = useCallback(
+    async (key: keyof UpdaterSettings, value: boolean | number) => {
+      if (!snapshot) return;
+      setError(null);
+      try {
+        const nextSnapshot = await updateUpdaterSettings({
+          ...snapshot.settings,
+          [key]: value
+        });
+        setSnapshot(nextSnapshot);
+        setStatusMessage(nextSnapshot.message);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Update settings failed to save.");
+      }
+    },
+    [snapshot]
+  );
+
+  const runUpdateAction = useCallback(
+    async (candidate: UpdateCandidate, action: UpdateActionKind) => {
+      setError(null);
+      try {
+        const nextSnapshot = await applyUpdateAction({
+          candidate_id: candidate.id,
+          action
+        });
+        setSnapshot(nextSnapshot);
+        setStatusMessage(`${candidate.model_name}: ${actionStatusLabel(action)}.`);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Update action failed.");
+      }
+    },
+    []
+  );
+
+  if (!snapshot || !hardware) {
+    return (
+      <div className="updates-page">
+        <Panel title="Model Updates">
+          <div className="loading-state">
+            <Download size={22} />
+            <strong>{statusMessage}</strong>
+            {error ? <span>{error}</span> : <span>Preparing fixture metadata sources.</span>}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  const availableCandidates = snapshot.candidates.filter((candidate) => !candidate.ignored);
+
+  return (
+    <div className="updates-page">
+      <Panel title="Model Update Metadata">
+        <div className="updates-toolbar">
+          <div className="hardware-title">
+            <Download size={24} />
+            <div>
+              <strong>{snapshot.status}</strong>
+              <span>{statusMessage}</span>
+            </div>
+          </div>
+          <button
+            className="secondary-button"
+            disabled={snapshot.settings.privacy_mode_enabled}
+            onClick={() => runCheck(true)}
+            type="button"
+          >
+            <RefreshCw size={16} />
+            Check now
+          </button>
+          <button
+            className="secondary-button"
+            disabled={snapshot.settings.privacy_mode_enabled || isPaused}
+            onClick={() => runCheck(false)}
+            type="button"
+          >
+            <Clock size={16} />
+            Scheduled check
+          </button>
+        </div>
+        {error ? <div className="inline-error">{error}</div> : null}
+      </Panel>
+
+      <div className="updates-grid">
+        <Panel title="Metadata Sources">
+          <div className="settings-list">
+            <SettingToggle
+              checked={!snapshot.settings.privacy_mode_enabled}
+              description="Disabling privacy mode allows local fixture metadata checks."
+              label="Metadata checks"
+              onChange={(checked) => updateSetting("privacy_mode_enabled", !checked)}
+            />
+            <SettingToggle
+              checked={snapshot.settings.scheduled_checks_enabled}
+              description={isPaused ? "Scheduled checks are suspended while paused." : "Allow background update checks when the app is running."}
+              label="Scheduled checks"
+              onChange={(checked) => updateSetting("scheduled_checks_enabled", checked)}
+            />
+            <SettingToggle
+              checked={snapshot.settings.include_ollama}
+              description="Read the Ollama metadata fixture."
+              label="Ollama metadata"
+              onChange={(checked) => updateSetting("include_ollama", checked)}
+            />
+            <SettingToggle
+              checked={snapshot.settings.include_mlx_huggingface}
+              description="Read the MLX/Hugging Face metadata fixture."
+              label="MLX/Hugging Face metadata"
+              onChange={(checked) => updateSetting("include_mlx_huggingface", checked)}
+            />
+            <SettingToggle
+              checked={snapshot.settings.include_custom_json}
+              description="Read the custom JSON catalog fixture."
+              label="Custom JSON catalog"
+              onChange={(checked) => updateSetting("include_custom_json", checked)}
+            />
+          </div>
+        </Panel>
+
+        <Panel title="Update Summary">
+          <div className="state-summary">
+            <StatusLine label="Candidates" value={String(availableCandidates.length)} />
+            <StatusLine label="Ignored" value={String(snapshot.candidates.length - availableCandidates.length)} />
+            <StatusLine
+              label="Last checked"
+              value={snapshot.last_checked_ms ? formatTimestamp(snapshot.last_checked_ms) : "Not checked"}
+            />
+            <StatusLine label="Privacy mode" value={snapshot.settings.privacy_mode_enabled ? "On" : "Off"} />
+            <StatusLine label="Pause gate" value={isPaused ? "Scheduled checks suspended" : "Open"} />
+          </div>
+          <div className="reminder-row">
+            <span>Remind later</span>
+            <input
+              aria-label="Remind later hours"
+              min={1}
+              max={168}
+              onChange={(event) => updateSetting("remind_later_hours", Number(event.target.value))}
+              type="number"
+              value={snapshot.settings.remind_later_hours}
+            />
+            <strong>hours</strong>
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Available Updates">
+        {snapshot.settings.privacy_mode_enabled ? (
+          <div className="empty-log-state">
+            <ShieldCheck size={22} />
+            <strong>Privacy mode is on.</strong>
+            <span>Metadata checks are disabled.</span>
+          </div>
+        ) : availableCandidates.length === 0 ? (
+          <div className="empty-log-state">
+            <Download size={22} />
+            <strong>No update candidates loaded.</strong>
+            <span>Run Check now to load fixture metadata.</span>
+          </div>
+        ) : (
+          <div className="update-card-grid">
+            {availableCandidates.map((candidate) => (
+              <UpdateCard candidate={candidate} key={candidate.id} onAction={runUpdateAction} />
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="Update History">
+        {snapshot.history.length === 0 ? (
+          <div className="empty-log-state">
+            <Clock size={22} />
+            <strong>No update actions recorded yet.</strong>
+            <span>Use an update card action to add history.</span>
+          </div>
+        ) : (
+          <table className="data-table logs-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Candidate</th>
+                <th>Action</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshot.history.map((entry) => (
+                <tr key={`${entry.timestamp_ms}-${entry.candidate_id}-${entry.action}`}>
+                  <td>{formatTimestamp(entry.timestamp_ms)}</td>
+                  <td>{entry.candidate_id}</td>
+                  <td>{entry.action}</td>
+                  <td>{entry.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function UpdateCard({
+  candidate,
+  onAction
+}: {
+  candidate: UpdateCandidate;
+  onAction: (candidate: UpdateCandidate, action: UpdateActionKind) => void;
+}) {
+  return (
+    <article className="update-card">
+      <div className="update-card-heading">
+        <div>
+          <strong>{candidate.model_name}</strong>
+          <span>{sourceKindLabel(candidate.source_kind)}</span>
+        </div>
+        <span className={`fit-pill ${candidate.compatibility_label.toLowerCase()}`}>
+          {candidate.compatibility_label} {candidate.compatibility_score}
+        </span>
+      </div>
+      <div className="version-row">
+        <span>{candidate.current_version}</span>
+        <strong>{"->"}</strong>
+        <span>{candidate.latest_version}</span>
+      </div>
+      <p>{candidate.release_notes}</p>
+      <div className="reason-list">
+        <span>{candidate.source_name}</span>
+        {candidate.blocked_reasons.length > 0 ? (
+          <strong>{candidate.blocked_reasons.join(", ")}</strong>
+        ) : (
+          <span>{candidate.compatibility_notes[0] ?? "Compatibility fixture scored successfully."}</span>
+        )}
+        {candidate.remind_after_ms ? <span>Reminder: {formatTimestamp(candidate.remind_after_ms)}</span> : null}
+        <span>Status: {candidate.action_status}</span>
+      </div>
+      <div className="update-actions">
+        <button className="secondary-button" onClick={() => onAction(candidate, "Install")} type="button">
+          <Download size={15} />
+          Install
+        </button>
+        <button className="secondary-button" onClick={() => onAction(candidate, "InstallAndSwitch")} type="button">
+          <RefreshCw size={15} />
+          Install and switch
+        </button>
+        <button className="secondary-button" onClick={() => onAction(candidate, "RemindLater")} type="button">
+          <Clock size={15} />
+          Remind later
+        </button>
+        <button className="ghost-button" onClick={() => onAction(candidate, "Ignore")} type="button">
+          <Ban size={15} />
+          Ignore
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function InstallerPage() {
   const [plans, setPlans] = useState<InstallPlan[]>([]);
   const [state, setState] = useState<InstallRunState | null>(null);
@@ -2857,6 +3187,30 @@ function platformLabel(platform: InstallPlan["platform"]) {
       return "macOS Intel";
     case "WindowsX64":
       return "Windows x64";
+  }
+}
+
+function sourceKindLabel(kind: MetadataSourceKind) {
+  switch (kind) {
+    case "Ollama":
+      return "Ollama";
+    case "MlxHuggingFace":
+      return "MLX / Hugging Face";
+    case "CustomJson":
+      return "Custom JSON";
+  }
+}
+
+function actionStatusLabel(action: UpdateActionKind) {
+  switch (action) {
+    case "Ignore":
+      return "ignored";
+    case "RemindLater":
+      return "reminder scheduled";
+    case "Install":
+      return "dry-run install queued";
+    case "InstallAndSwitch":
+      return "dry-run install-and-switch queued";
   }
 }
 
