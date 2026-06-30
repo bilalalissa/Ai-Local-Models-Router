@@ -1,5 +1,6 @@
 mod app_state;
 mod hardware_probe;
+mod installer_core;
 mod model_catalog;
 mod provider_core;
 
@@ -11,6 +12,7 @@ use hardware_probe::{
     export_specs, list_fixtures, load_fixture, probe_live_specs, HardwareExportFormat,
     HardwareFixtureSummary, HardwareSpecs,
 };
+use installer_core::{InstallPlan, InstallRunState, InstallerManager, StartInstallRequest};
 use model_catalog::{
     load_model_catalog, score_model_catalog, CompatibilityResult, ModelEntry,
     ScoreModelCatalogRequest,
@@ -26,6 +28,7 @@ use tauri::{
 };
 
 type SharedAppState = Mutex<AppStateStore>;
+type SharedInstallerState = Mutex<InstallerManager>;
 type SharedProviderState = Mutex<ProviderManager>;
 
 #[tauri::command]
@@ -123,6 +126,92 @@ fn get_model_catalog() -> Result<Vec<ModelEntry>, String> {
 #[tauri::command]
 fn score_models(request: ScoreModelCatalogRequest) -> Result<Vec<CompatibilityResult>, String> {
     score_model_catalog(request)
+}
+
+#[tauri::command]
+fn list_install_plans(
+    installer_state: State<'_, SharedInstallerState>,
+) -> Result<Vec<InstallPlan>, String> {
+    let installer = installer_state
+        .lock()
+        .map_err(|_| "installer state lock poisoned".to_string())?;
+    Ok(installer.plans())
+}
+
+#[tauri::command]
+fn get_install_state(
+    installer_state: State<'_, SharedInstallerState>,
+) -> Result<InstallRunState, String> {
+    let installer = installer_state
+        .lock()
+        .map_err(|_| "installer state lock poisoned".to_string())?;
+    Ok(installer.state())
+}
+
+#[tauri::command]
+fn start_install_run(
+    app: tauri::AppHandle,
+    installer_state: State<'_, SharedInstallerState>,
+    request: StartInstallRequest,
+) -> Result<InstallRunState, String> {
+    let mut installer = installer_state
+        .lock()
+        .map_err(|_| "installer state lock poisoned".to_string())?;
+    let state = installer.start(request)?;
+    emit_install_state(&app, &state);
+    Ok(state)
+}
+
+#[tauri::command]
+fn advance_install_run(
+    app: tauri::AppHandle,
+    installer_state: State<'_, SharedInstallerState>,
+) -> Result<InstallRunState, String> {
+    let mut installer = installer_state
+        .lock()
+        .map_err(|_| "installer state lock poisoned".to_string())?;
+    let state = installer.advance()?;
+    emit_install_state(&app, &state);
+    Ok(state)
+}
+
+#[tauri::command]
+fn pause_install_run(
+    app: tauri::AppHandle,
+    installer_state: State<'_, SharedInstallerState>,
+) -> Result<InstallRunState, String> {
+    let mut installer = installer_state
+        .lock()
+        .map_err(|_| "installer state lock poisoned".to_string())?;
+    let state = installer.pause()?;
+    emit_install_state(&app, &state);
+    Ok(state)
+}
+
+#[tauri::command]
+fn resume_install_run(
+    app: tauri::AppHandle,
+    installer_state: State<'_, SharedInstallerState>,
+) -> Result<InstallRunState, String> {
+    let mut installer = installer_state
+        .lock()
+        .map_err(|_| "installer state lock poisoned".to_string())?;
+    let state = installer.resume()?;
+    emit_install_state(&app, &state);
+    Ok(state)
+}
+
+#[tauri::command]
+fn cancel_install_run(
+    app: tauri::AppHandle,
+    installer_state: State<'_, SharedInstallerState>,
+) -> Result<InstallRunState, String> {
+    let mut installer = installer_state
+        .lock()
+        .map_err(|_| "installer state lock poisoned".to_string())?;
+    let state = installer.cancel()?;
+    emit_install_state(&app, &state);
+    Ok(state)
 }
 
 #[tauri::command]
@@ -299,6 +388,7 @@ pub fn run() {
                 .map_err(|err| format!("failed to resolve app data directory: {err}"))?;
             let store = AppStateStore::load(state_file_path(&app_data_dir))?;
             app.manage(Mutex::new(store));
+            app.manage(Mutex::new(InstallerManager::seeded(app_data_dir)));
             app.manage(Mutex::new(ProviderManager::seeded()));
             install_pause_menu(app.handle())?;
             Ok(())
@@ -315,6 +405,13 @@ pub fn run() {
             export_hardware_specs,
             get_model_catalog,
             score_models,
+            list_install_plans,
+            get_install_state,
+            start_install_run,
+            advance_install_run,
+            pause_install_run,
+            resume_install_run,
+            cancel_install_run,
             list_provider_statuses,
             refresh_provider_health,
             start_provider,
@@ -346,6 +443,11 @@ fn emit_provider_statuses(app: &tauri::AppHandle, statuses: &[ProviderStatus]) {
     for status in statuses {
         emit_provider_status(app, status);
     }
+}
+
+fn emit_install_state(app: &tauri::AppHandle, state: &InstallRunState) {
+    let _ = app.emit("install-progress-changed", state);
+    let _ = app.emit("log-appended", state.logs.first());
 }
 
 fn pause_providers(

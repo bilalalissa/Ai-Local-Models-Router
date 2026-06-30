@@ -1316,6 +1316,150 @@ button:disabled {
   white-space: nowrap;
 }
 
+.installer-page {
+  display: grid;
+  gap: 16px;
+  max-width: 1340px;
+  margin: 0 auto;
+}
+
+.installer-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(280px, auto) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.installer-toolbar select {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 12px;
+  background: #f8fafc;
+  color: var(--text);
+  font: inherit;
+}
+
+.installer-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+}
+
+.consent-box,
+.install-progress,
+.active-command {
+  display: grid;
+  gap: 10px;
+}
+
+.consent-box {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.consent-box span,
+.active-command span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.consent-box .compact-check {
+  align-items: flex-start;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.consent-box .compact-check input {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.progress-heading,
+.command-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-heading span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.progress-track {
+  overflow: hidden;
+  height: 12px;
+  border: 1px solid #bfd3ef;
+  border-radius: 999px;
+  background: #edf4ff;
+}
+
+.progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
+.active-command {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.active-command code {
+  overflow: auto;
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #f8fafc;
+  color: #182235;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.installer-command-panel {
+  grid-column: 1 / -1;
+}
+
+.command-row {
+  align-items: start;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+
+.command-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.command-row > span:first-child {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+  background: #edf4ff;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.command-row > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+}
+
 .empty-header {
   display: grid;
   gap: 10px;
@@ -1391,7 +1535,8 @@ button:disabled {
   .fit-summary-grid,
   .fit-content-grid,
   .provider-card-grid,
-  .provider-detail-grid {
+  .provider-detail-grid,
+  .installer-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1413,12 +1558,14 @@ button:disabled {
   .hardware-table-grid,
   .fit-toolbar,
   .provider-toolbar,
-  .provider-chat-form {
+  .provider-chat-form,
+  .installer-toolbar {
     grid-template-columns: 1fr;
   }
 
   .fit-content-grid,
-  .provider-detail-grid {
+  .provider-detail-grid,
+  .installer-grid {
     grid-template-columns: 1fr;
   }
 }

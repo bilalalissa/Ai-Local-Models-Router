@@ -6,15 +6,15 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 6: real local provider adapters. The
+This repository is currently at Stage 7: runtime and model installation flow. The
 Tauri desktop shell exists, exposes persisted pause/resume state, includes
 native hardware probing and specs export, scores a seeded local model catalog,
-and now includes local HTTP adapters for Ollama, LM Studio, custom
-OpenAI-compatible servers, MLX-LM, and llama.cpp with health checks, model
-listing, tiny test chat, settings, dry-run setup plans, logs, and pause/resume
-task hooks. Model routing execution, real installers/downloads, remote broker
-behavior, and model/update automation are intentionally deferred to later
-approved stages.
+includes local HTTP adapters for Ollama, LM Studio, custom OpenAI-compatible
+servers, MLX-LM, and llama.cpp, and now includes a dry-run runtime/model
+installer with consent, command hook previews, app-managed folders, progress,
+logs, pause, resume, and cancel. Model routing execution, real
+installers/downloads, remote broker behavior, and model/update automation are
+intentionally deferred to later approved stages.
 
 ## Stage Gate Rule
 
@@ -66,6 +66,10 @@ start the next implementation stage until the user explicitly approves it.
 - Stage 6 real local providers: Ollama, LM Studio, custom OpenAI-compatible,
   MLX-LM, and llama.cpp local HTTP adapters with health checks, model listing,
   tiny test chat, settings UI, dry-run setup plans, and pause-aware task gates.
+- Stage 7 installer flow: dry-run installer state machine, real command hook
+  records, consent-gated recommended setup UI, app-managed runtime/model/cache
+  folders, progress, logs, pause/resume/cancel, and Apple Silicon, Intel Mac,
+  and Windows x64 install plans.
 
 ## Planned Stack
 
@@ -115,11 +119,10 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 6 note: provider adapters call local HTTP endpoints when running inside
-Tauri. Browser/Vite development uses simulated local-provider fallback data for
-UI testing. Start/stop actions enable or disable adapters; real external process
-launch and model downloads are deferred to Stage 7. Router decisions, updater
-checks, notifications, and remote broker workers do not exist yet.
+Stage 7 note: the installer is dry-run only. It records realistic command hooks
+and app-managed folder paths, but never executes commands or downloads model
+weights. Router decisions, updater checks, notifications, and remote broker
+workers do not exist yet.
 
 ## Visual Baseline
 
@@ -144,7 +147,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 4 - Model Catalog and Compatibility Scoring
 - [x] Stage 5 - Provider Adapter Layer With Mocked Providers
 - [x] Stage 6 - Real Local Provider Adapters
-- [ ] Stage 7 - Runtime and Model Installation Flow
+- [x] Stage 7 - Runtime and Model Installation Flow
 - [ ] Stage 8 - Router Auto/Manual/Forced Model Selection
 - [ ] Stage 9 - Notifications and Background Behavior
 - [ ] Stage 10 - Model Update Metadata Checker
@@ -235,7 +238,7 @@ marked as a stub.
 - Do not implement model downloads except dry-run hooks.
 - Stop and ask for approval.
 
-### Stage 7 - Runtime and Model Installation Flow
+### [x] Stage 7 - Runtime and Model Installation Flow
 
 - Implement dry-run installer mode and real command hook structure.
 - Add consent screens and "Install recommended setup" flow.

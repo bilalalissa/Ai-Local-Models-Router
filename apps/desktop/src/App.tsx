@@ -48,6 +48,19 @@ import {
   refreshHardwareSpecs
 } from "./hardware";
 import {
+  type CommandHook,
+  type InstallPlan,
+  type InstallRunState,
+  advanceInstallRun,
+  cancelInstallRun,
+  getInstallState,
+  listInstallPlans,
+  pauseInstallRun,
+  resumeInstallRun,
+  startInstallRun,
+  subscribeInstallProgress
+} from "./installer";
+import {
   type CompatibilityResult,
   type PreferenceTag,
   type ProviderKind,
@@ -281,13 +294,20 @@ export default function App() {
             />
           ) : null}
           {activePage === "dashboard" ? (
-            <Dashboard appState={appState} onPause={handlePause} onResume={handleResume} />
+            <Dashboard
+              appState={appState}
+              onNavigate={setActivePage}
+              onPause={handlePause}
+              onResume={handleResume}
+            />
           ) : activePage === "machine-specs" ? (
             <MachineSpecsPage />
           ) : activePage === "model-fit-map" ? (
             <ModelFitMapPage appState={appState} />
           ) : activePage === "providers" ? (
             <ProvidersPage appState={appState} />
+          ) : activePage === "updates" ? (
+            <InstallerPage />
           ) : activePage === "router" ? (
             <RouterShell appState={appState} onPause={handlePause} onResume={handleResume} />
           ) : activePage === "settings" ? (
@@ -351,7 +371,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 6 adapters</span>
+          <span>Stage 7 installer</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -414,10 +434,12 @@ function TopBar({
 
 function Dashboard({
   appState,
+  onNavigate,
   onPause,
   onResume
 }: {
   appState: AppStateSnapshot;
+  onNavigate: (id: PageId) => void;
   onPause: (source: PauseSource, action?: PauseAction) => Promise<void>;
   onResume: (source: PauseSource) => Promise<void>;
 }) {
@@ -523,7 +545,14 @@ function Dashboard({
             label={isPaused ? "Resume app" : "Pause app"}
             onClick={() => (isPaused ? onResume("Dashboard") : onPause("Dashboard"))}
           />
-          <ActionButton icon={Download} label="Install recommended setup" />
+          <ActionButton
+            icon={Download}
+            label="Install recommended setup"
+            onClick={() => {
+              window.location.hash = "updates";
+              onNavigate("updates");
+            }}
+          />
           <ActionButton icon={Play} label="Start provider" />
           <ActionButton icon={MessageSquare} label="Test chat" />
           <ActionButton icon={FileText} label="Export specs" />
@@ -1611,6 +1640,258 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
   );
 }
 
+function InstallerPage() {
+  const [plans, setPlans] = useState<InstallPlan[]>([]);
+  const [state, setState] = useState<InstallRunState | null>(null);
+  const [selectedPlanId, setSelectedPlanId] = useState("");
+  const [consentGranted, setConsentGranted] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("Loading install plans...");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let ignore = false;
+    let unlisten: (() => void) | undefined;
+    Promise.all([listInstallPlans(), getInstallState()])
+      .then(([nextPlans, nextState]) => {
+        if (ignore) return;
+        setPlans(nextPlans);
+        setState(nextState);
+        setSelectedPlanId(nextState.selected_plan_id ?? nextPlans[0]?.id ?? "");
+        setStatusMessage(`${nextPlans.length} recommended install plans ready.`);
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setError(errorMessage(err));
+        setStatusMessage("Install plans failed to load.");
+      });
+
+    subscribeInstallProgress((nextState) => {
+      setState(nextState);
+      setSelectedPlanId((current) => nextState.selected_plan_id ?? current);
+    }).then((unsubscribe) => {
+      unlisten = unsubscribe;
+      if (ignore) unsubscribe();
+    });
+
+    return () => {
+      ignore = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const selectedPlan = useMemo(
+    () => plans.find((plan) => plan.id === selectedPlanId) ?? plans[0] ?? null,
+    [plans, selectedPlanId]
+  );
+
+  const runAction = useCallback(
+    async (action: () => Promise<InstallRunState>, message: string) => {
+      setError(null);
+      try {
+        const nextState = await action();
+        setState(nextState);
+        setStatusMessage(message);
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+    },
+    []
+  );
+
+  const handleStart = useCallback(() => {
+    if (!selectedPlan) return;
+    runAction(
+      () =>
+        startInstallRun({
+          plan_id: selectedPlan.id,
+          dry_run: true,
+          consent_granted: consentGranted
+        }),
+      consentGranted ? "Dry-run installer started." : "Consent required before install dry run."
+    );
+  }, [consentGranted, runAction, selectedPlan]);
+
+  if (!selectedPlan || !state) {
+    return (
+      <div className="installer-page">
+        <Panel title="Runtime Installer">
+          <div className="loading-state">
+            <Download size={22} />
+            <strong>{statusMessage}</strong>
+            {error ? <span>{error}</span> : <span>Preparing runtime and model install plans.</span>}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
+
+  const isRunning = state.status === "Running";
+  const isPaused = state.status === "Paused";
+  const activePlan = plans.find((plan) => plan.id === state.selected_plan_id) ?? selectedPlan;
+
+  return (
+    <div className="installer-page">
+      <Panel title="Runtime and Model Installation">
+        <div className="installer-toolbar">
+          <div className="hardware-title">
+            <Download size={24} />
+            <div>
+              <strong>{activePlan.name}</strong>
+              <span>{statusMessage}</span>
+            </div>
+          </div>
+          <select
+            aria-label="Install plan"
+            disabled={isRunning || isPaused}
+            onChange={(event) => {
+              setSelectedPlanId(event.target.value);
+              setConsentGranted(false);
+              setStatusMessage("Install plan selected.");
+            }}
+            value={selectedPlanId}
+          >
+            {plans.map((plan) => (
+              <option key={plan.id} value={plan.id}>
+                {plan.name}
+              </option>
+            ))}
+          </select>
+          <span className={`health-pill ${installStatusClass(state.status)}`}>{state.status}</span>
+        </div>
+        {error ? <div className="inline-error">{error}</div> : null}
+      </Panel>
+
+      <div className="installer-grid">
+        <Panel title="Recommended Setup">
+          <SpecRows
+            rows={[
+              ["Platform", platformLabel(selectedPlan.platform)],
+              ["Runtime Folder", selectedPlan.runtime_dir],
+              ["Model Folder", selectedPlan.model_dir],
+              ["Cache Folder", selectedPlan.cache_dir],
+              ["Dry Run", "Required in Stage 7"]
+            ]}
+          />
+          <p className="fine-print">{selectedPlan.summary}</p>
+          <div className="consent-box">
+            <strong>Consent</strong>
+            {selectedPlan.consent_items.map((item) => (
+              <span key={item}>{item}</span>
+            ))}
+            <label className="compact-check">
+              <input
+                checked={consentGranted}
+                onChange={(event) => setConsentGranted(event.target.checked)}
+                type="checkbox"
+              />
+              I understand this is a dry run and no commands will execute.
+            </label>
+          </div>
+          <div className="provider-actions">
+            <button className="secondary-button" disabled={isRunning} onClick={handleStart} type="button">
+              <Download size={16} />
+              Install recommended setup
+            </button>
+            <button
+              className="secondary-button"
+              disabled={!isRunning}
+              onClick={() => runAction(advanceInstallRun, "Dry-run advanced one step.")}
+              type="button"
+            >
+              <Play size={16} />
+              Advance dry run
+            </button>
+            <button
+              className="secondary-button"
+              disabled={!isRunning}
+              onClick={() => runAction(pauseInstallRun, "Installer dry-run paused.")}
+              type="button"
+            >
+              <Pause size={16} />
+              Pause install
+            </button>
+            <button
+              className="resume-button"
+              disabled={!isPaused}
+              onClick={() => runAction(resumeInstallRun, "Installer dry-run resumed.")}
+              type="button"
+            >
+              <Play size={16} />
+              Resume install
+            </button>
+            <button
+              className="secondary-button"
+              disabled={!["Running", "Paused", "NeedsConsent"].includes(state.status)}
+              onClick={() => runAction(cancelInstallRun, "Installer dry-run canceled.")}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="Progress">
+          <div className="install-progress">
+            <div className="progress-heading">
+              <strong>{state.progress_percent}%</strong>
+              <span>
+                Step {Math.min(state.current_step + 1, Math.max(state.total_steps, 1))} of {state.total_steps}
+              </span>
+            </div>
+            <div className="progress-track" aria-label="Install progress">
+              <span style={{ width: `${state.progress_percent}%` }} />
+            </div>
+            {state.active_command ? (
+              <CommandDetail command={state.active_command} />
+            ) : (
+              <p className="fine-print">
+                No active command. Completed, canceled, or idle runs have no pending hook.
+              </p>
+            )}
+          </div>
+        </Panel>
+
+        <Panel title="Command Details" className="installer-command-panel">
+          <div className="command-list">
+            {selectedPlan.commands.map((command, index) => (
+              <div className="command-row" key={command.id}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{command.label}</strong>
+                  <code>{renderInstallCommand(command)}</code>
+                </div>
+                <span className="fit-pill tight">{command.kind}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Install Logs">
+          <div className="provider-log-list">
+            {state.logs.slice(0, 10).map((entry) => (
+              <div className="provider-log-row" key={`${entry.timestamp_ms}-${entry.message}`}>
+                <span>{formatTimestamp(entry.timestamp_ms)}</span>
+                <strong>{entry.level}</strong>
+                <span>{entry.message}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function CommandDetail({ command }: { command: CommandHook }) {
+  return (
+    <div className="active-command">
+      <strong>{command.label}</strong>
+      <code>{renderInstallCommand(command)}</code>
+      <span>{command.dry_run_only ? "Dry-run hook only" : "Executable hook"}</span>
+    </div>
+  );
+}
+
 function RouterShell({
   appState,
   onPause,
@@ -2087,6 +2368,37 @@ function totalSuspended(snapshot: AppStateSnapshot): number {
     tasks.remote_discovery +
     tasks.health_polling
   );
+}
+
+function platformLabel(platform: InstallPlan["platform"]) {
+  switch (platform) {
+    case "AppleSilicon":
+      return "macOS Apple Silicon";
+    case "IntelMac":
+      return "macOS Intel";
+    case "WindowsX64":
+      return "Windows x64";
+  }
+}
+
+function installStatusClass(status: InstallRunState["status"]) {
+  switch (status) {
+    case "Running":
+    case "Completed":
+      return "healthy";
+    case "Paused":
+    case "NeedsConsent":
+      return "paused";
+    case "Canceled":
+    case "Error":
+      return "error";
+    case "Idle":
+      return "stopped";
+  }
+}
+
+function renderInstallCommand(command: CommandHook) {
+  return [command.program, ...command.args].join(" ");
 }
 
 function formatTimestamp(timestampMs: number): string {
