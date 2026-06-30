@@ -59,10 +59,10 @@ start the next implementation stage until the user explicitly approves it.
 
 ## Current Deliverables
 
-- [Architecture](docs/ARCHITECTURE.md): technology choices, module boundaries,
+- [Architecture](docs/development/ARCHITECTURE.md): technology choices, module boundaries,
   data models, provider design, hardware probing, router design, pause/resume
   behavior, persistence, security, and UI baseline.
-- [Stage Checklist](docs/STAGE_CHECKLIST.md): implementation sequence for
+- [Stage Checklist](docs/development/STAGE_CHECKLIST.md): implementation sequence for
   Stages 1-14 with mandatory stop points.
 - Stage 1 desktop shell under `apps/desktop`: Tauri v2, React, TypeScript,
   Vite, main navigation, empty page states, global app-state badge, and
@@ -181,11 +181,11 @@ Authenticode signing outside this repository.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md)
-- [Stage Checklist](docs/STAGE_CHECKLIST.md)
+- [Architecture](docs/development/ARCHITECTURE.md)
+- [Stage Checklist](docs/development/STAGE_CHECKLIST.md)
 - [Packaging](docs/PACKAGING.md)
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
-- [Final Verification](docs/FINAL_VERIFICATION.md)
+- [Final Verification](docs/development/FINAL_VERIFICATION.md)
 - [User Guide](docs/USER_GUIDE.md)
 - [Providers](docs/PROVIDERS.md)
 - [Model Catalog](docs/MODEL_CATALOG.md)
