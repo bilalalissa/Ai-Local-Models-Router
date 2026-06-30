@@ -67,62 +67,104 @@ export type ProviderChatResponse = {
   latency_ms: number;
 };
 
-const storageKey = "local-ai-router:stage5-provider-state";
+export type ProviderSettings = {
+  provider_id: string;
+  enabled: boolean;
+  base_url: string;
+  folder: string;
+  launch_command: string | null;
+  api_key_configured: boolean;
+  notes: string;
+};
 
-const fallbackProviders: Array<{
+export type ProviderSettingsPatch = {
+  provider_id: string;
+  enabled: boolean;
+  base_url: string;
+  folder: string;
+  launch_command: string | null;
+};
+
+export type ProviderInstallPlan = {
+  provider_id: string;
+  dry_run: boolean;
+  summary: string;
+  commands: string[];
+  notes: string[];
+};
+
+type FallbackProvider = {
   definition: ProviderDefinition;
+  settings: ProviderSettings;
   models: ProviderModel[];
   running: boolean;
   paused: boolean;
   health: ProviderHealth;
   latency_ms: number | null;
   logs: ProviderLogEntry[];
-}> = [
+};
+
+const storageKey = "local-ai-router:stage6-provider-state";
+
+const fallbackProviders: FallbackProvider[] = [
   providerSeed(
-    "mock-mlx",
-    "MLX-LM Server",
-    "MlxLm",
-    "http://127.0.0.1:8080",
-    "~/Library/Application Support/Local AI Router/providers/mlx-lm",
-    [
-      providerModel("qwen2-5-coder-7b-mlx", "Qwen2.5 Coder 7B MLX", "MLX / 4-bit", 4_831_838_208, true),
-      providerModel("phi-3-5-mini-q4", "Phi-3.5 Mini", "GGUF / Q4_K_M", 2_684_354_560, true)
-    ],
-    true
-  ),
-  providerSeed(
-    "mock-ollama",
+    "ollama-local",
     "Ollama",
     "Ollama",
     "http://127.0.0.1:11434",
     "~/Library/Application Support/Local AI Router/providers/ollama",
     [
-      providerModel("llama-3-1-8b-q4", "Llama 3.1 8B Instruct Q4", "GGUF / Q4_K_M", 5_368_709_120, true),
-      providerModel("phi-3-5-mini-q4", "Phi-3.5 Mini Instruct Q4", "GGUF / Q4_K_M", 2_684_354_560, true),
-      providerModel("nomic-embed-text", "Nomic Embed Text", "GGUF / F16", 629_145_600, true)
+      providerModel("llama3.1:8b", "llama3.1:8b", "llama / Q4_K_M", 5_368_709_120, true),
+      providerModel("nomic-embed-text", "nomic-embed-text", "Ollama / local", 629_145_600, false)
     ],
-    true
+    "Ollama local HTTP API at /api/tags and /api/generate."
   ),
   providerSeed(
-    "mock-lm-studio",
+    "lm-studio-local",
     "LM Studio",
     "LmStudio",
-    "http://127.0.0.1:1234",
+    "http://127.0.0.1:1234/v1",
     "~/Library/Application Support/Local AI Router/providers/lm-studio",
     [
-      providerModel("mistral-7b-instruct-q4", "Mistral 7B Instruct Q4", "GGUF / Q4_K_M", 4_563_402_752, false),
-      providerModel("qwen2-5-coder-7b-q4", "Qwen2.5 Coder 7B Q4", "GGUF / Q4_K_M", 5_100_273_664, false)
+      providerModel("local-model", "local-model", "OpenAI-compatible", 4_563_402_752, true),
+      providerModel("qwen2.5-coder-local", "qwen2.5-coder-local", "OpenAI-compatible", 5_100_273_664, true)
     ],
-    false
+    "LM Studio local server with the OpenAI-compatible API enabled."
   ),
   providerSeed(
-    "mock-openai-compatible",
+    "openai-compatible-local",
     "Custom OpenAI-Compatible",
     "OpenAiCompatible",
     "http://127.0.0.1:5001/v1",
     "~/Library/Application Support/Local AI Router/providers/custom-openai",
-    [providerModel("custom-local-chat", "Custom Local Chat", "OpenAI-compatible", 0, true)],
-    false
+    [providerModel("local-chat", "local-chat", "OpenAI-compatible", 0, true)],
+    "Custom local OpenAI-compatible endpoint. API key storage is deferred."
+  ),
+  providerSeed(
+    "mlx-lm-local",
+    "MLX-LM Server",
+    "MlxLm",
+    "http://127.0.0.1:8080/v1",
+    "~/Library/Application Support/Local AI Router/providers/mlx-lm",
+    [
+      providerModel(
+        "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
+        "Qwen2.5 Coder 7B MLX",
+        "OpenAI-compatible",
+        4_831_838_208,
+        true
+      )
+    ],
+    "MLX-LM OpenAI-compatible server for Apple Silicon."
+  ),
+  providerSeed(
+    "llama-cpp-local",
+    "llama.cpp Server",
+    "LlamaCpp",
+    "http://127.0.0.1:8081/v1",
+    "~/Library/Application Support/Local AI Router/providers/llama-cpp",
+    [providerModel("local-gguf", "local-gguf", "OpenAI-compatible", 4_563_402_752, true)],
+    "llama.cpp server with OpenAI-compatible endpoints."
   )
 ];
 
@@ -135,12 +177,16 @@ export async function refreshProviderHealth(): Promise<ProviderStatus[]> {
   if (isTauriRuntime()) return invoke<ProviderStatus[]>("refresh_provider_health");
   const providers = readFallbackProviders().map((provider, index) => ({
     ...provider,
-    health: provider.running && !provider.paused ? (index === 2 ? "Degraded" as const : "Healthy" as const) : provider.health,
-    latency_ms: provider.running && !provider.paused ? 38 + index * 13 : null,
-    logs: [
-      logEntry(provider.definition.id, "debug", "Mock health check completed."),
-      ...provider.logs
-    ]
+    running: provider.settings.enabled && !provider.paused,
+    health: provider.settings.enabled
+      ? provider.paused
+        ? ("Paused" as const)
+        : index === 2
+          ? ("Degraded" as const)
+          : ("Healthy" as const)
+      : ("Stopped" as const),
+    latency_ms: provider.settings.enabled && !provider.paused ? 34 + index * 9 : null,
+    logs: [logEntry(provider.definition.id, "debug", "Browser fallback local health check completed."), ...provider.logs]
   }));
   writeFallbackProviders(providers);
   providers.forEach((provider) => emitProviderStatus(statusFromFallback(provider)));
@@ -151,11 +197,12 @@ export async function startProvider(providerId: string): Promise<ProviderStatus>
   if (isTauriRuntime()) return invoke<ProviderStatus>("start_provider", { providerId });
   return updateProvider(providerId, (provider) => ({
     ...provider,
+    settings: { ...provider.settings, enabled: true },
     running: true,
     paused: false,
     health: "Healthy",
-    latency_ms: 48,
-    logs: [logEntry(providerId, "info", "Mock provider started."), ...provider.logs]
+    latency_ms: 44,
+    logs: [logEntry(providerId, "info", "Provider enabled in browser fallback."), ...provider.logs]
   }));
 }
 
@@ -163,11 +210,12 @@ export async function stopProvider(providerId: string): Promise<ProviderStatus> 
   if (isTauriRuntime()) return invoke<ProviderStatus>("stop_provider", { providerId });
   return updateProvider(providerId, (provider) => ({
     ...provider,
+    settings: { ...provider.settings, enabled: false },
     running: false,
     paused: false,
     health: "Stopped",
     latency_ms: null,
-    logs: [logEntry(providerId, "info", "Mock provider stopped."), ...provider.logs]
+    logs: [logEntry(providerId, "info", "Provider disabled in browser fallback."), ...provider.logs]
   }));
 }
 
@@ -175,8 +223,9 @@ export async function pauseProviderTasks(providerId: string, reason: string): Pr
   if (isTauriRuntime()) return invoke<ProviderStatus>("pause_provider_tasks", { providerId, reason });
   return updateProvider(providerId, (provider) => ({
     ...provider,
-    paused: provider.running,
-    health: provider.running ? "Paused" : provider.health,
+    paused: provider.settings.enabled,
+    running: provider.running,
+    health: provider.settings.enabled ? "Paused" : provider.health,
     logs: [logEntry(providerId, "info", `Provider tasks paused: ${reason}`), ...provider.logs]
   }));
 }
@@ -186,26 +235,21 @@ export async function resumeProviderTasks(providerId: string): Promise<ProviderS
   return updateProvider(providerId, (provider) => ({
     ...provider,
     paused: false,
-    health: provider.running ? "Healthy" : "Stopped",
-    latency_ms: provider.running ? 48 : null,
+    running: provider.settings.enabled,
+    health: provider.settings.enabled ? "Healthy" : "Stopped",
+    latency_ms: provider.settings.enabled ? 44 : null,
     logs: [logEntry(providerId, "info", "Provider tasks resumed."), ...provider.logs]
   }));
 }
 
 export async function pauseAllProviders(reason: string): Promise<ProviderStatus[]> {
   if (isTauriRuntime()) return refreshProviderHealth();
-  const statuses = await Promise.all(
-    readFallbackProviders().map((provider) => pauseProviderTasks(provider.definition.id, reason))
-  );
-  return statuses;
+  return Promise.all(readFallbackProviders().map((provider) => pauseProviderTasks(provider.definition.id, reason)));
 }
 
 export async function resumeAllProviders(): Promise<ProviderStatus[]> {
   if (isTauriRuntime()) return refreshProviderHealth();
-  const statuses = await Promise.all(
-    readFallbackProviders().map((provider) => resumeProviderTasks(provider.definition.id))
-  );
-  return statuses;
+  return Promise.all(readFallbackProviders().map((provider) => resumeProviderTasks(provider.definition.id)));
 }
 
 export async function listProviderModels(providerId: string): Promise<ProviderModel[]> {
@@ -218,22 +262,22 @@ export async function sendProviderTestChat(
 ): Promise<ProviderChatResponse> {
   if (isTauriRuntime()) return invoke<ProviderChatResponse>("send_provider_test_chat", { request });
   const provider = providerById(request.provider_id);
-  if (!provider.running) throw new Error("provider is stopped");
+  if (!provider.settings.enabled) throw new Error("provider is disabled");
   if (provider.paused) throw new Error("provider tasks are paused");
   const model = provider.models.find((item) => item.id === request.model_id) ?? provider.models[0];
   const response = {
     provider_id: provider.definition.id,
     model_id: model.id,
-    response: `[mock:${provider.definition.name}] ${model.display_name} is ready. Echo: ${
-      request.prompt.trim() || "(empty prompt)"
+    response: `[local-fallback:${provider.definition.name}] ${model.display_name} is reachable. Echo: ${
+      request.prompt.trim() || "Say ready."
     }`,
     tokens_in: request.prompt.trim().split(/\s+/).filter(Boolean).length,
-    tokens_out: 24,
+    tokens_out: 32,
     latency_ms: provider.latency_ms ?? 55
   };
   updateProvider(request.provider_id, (current) => ({
     ...current,
-    logs: [logEntry(request.provider_id, "info", "Mock test chat completed."), ...current.logs]
+    logs: [logEntry(request.provider_id, "info", "Local provider test chat completed."), ...current.logs]
   }));
   return response;
 }
@@ -248,7 +292,40 @@ export async function getProviderLogs(providerId?: string): Promise<ProviderLogE
 
 export async function getProviderFolder(providerId: string): Promise<string> {
   if (isTauriRuntime()) return invoke<string>("get_provider_folder", { providerId });
-  return providerById(providerId).definition.folder;
+  return providerById(providerId).settings.folder;
+}
+
+export async function getProviderSettings(providerId: string): Promise<ProviderSettings> {
+  if (isTauriRuntime()) return invoke<ProviderSettings>("get_provider_settings", { providerId });
+  return providerById(providerId).settings;
+}
+
+export async function updateProviderSettings(patch: ProviderSettingsPatch): Promise<ProviderStatus> {
+  if (isTauriRuntime()) return invoke<ProviderStatus>("update_provider_settings", { patch });
+  return updateProvider(patch.provider_id, (provider) => {
+    const baseUrl = normalizeBaseUrl(patch.base_url);
+    return {
+      ...provider,
+      definition: { ...provider.definition, base_url: baseUrl, folder: patch.folder },
+      settings: {
+        ...provider.settings,
+        enabled: patch.enabled,
+        base_url: baseUrl,
+        folder: patch.folder,
+        launch_command: patch.launch_command?.trim() ? patch.launch_command.trim() : null
+      },
+      running: patch.enabled,
+      paused: false,
+      health: patch.enabled ? "Healthy" : "Stopped",
+      latency_ms: patch.enabled ? provider.latency_ms ?? 44 : null,
+      logs: [logEntry(patch.provider_id, "info", "Provider settings updated."), ...provider.logs]
+    };
+  });
+}
+
+export async function previewProviderInstallPlan(providerId: string): Promise<ProviderInstallPlan> {
+  if (isTauriRuntime()) return invoke<ProviderInstallPlan>("preview_provider_install_plan", { providerId });
+  return installPlanFor(providerById(providerId));
 }
 
 export async function subscribeProviderHealth(
@@ -262,10 +339,7 @@ export async function subscribeProviderHealth(
   return () => window.removeEventListener("local-ai-router:provider-health-changed", handler);
 }
 
-function updateProvider(
-  providerId: string,
-  update: (provider: ReturnType<typeof readFallbackProviders>[number]) => ReturnType<typeof readFallbackProviders>[number]
-): ProviderStatus {
+function updateProvider(providerId: string, update: (provider: FallbackProvider) => FallbackProvider): ProviderStatus {
   const providers = readFallbackProviders();
   const index = providers.findIndex((provider) => provider.definition.id === providerId);
   if (index === -1) throw new Error(`unknown provider: ${providerId}`);
@@ -276,7 +350,7 @@ function updateProvider(
   return status;
 }
 
-function readFallbackProviders(): typeof fallbackProviders {
+function readFallbackProviders(): FallbackProvider[] {
   const raw = window.localStorage.getItem(storageKey);
   if (!raw) return cloneProviders(fallbackProviders);
   try {
@@ -286,7 +360,7 @@ function readFallbackProviders(): typeof fallbackProviders {
   }
 }
 
-function writeFallbackProviders(providers: typeof fallbackProviders) {
+function writeFallbackProviders(providers: FallbackProvider[]) {
   window.localStorage.setItem(storageKey, JSON.stringify(providers));
 }
 
@@ -296,24 +370,28 @@ function providerById(providerId: string) {
   return provider;
 }
 
-function statusFromFallback(provider: ReturnType<typeof readFallbackProviders>[number]): ProviderStatus {
+function statusFromFallback(provider: FallbackProvider): ProviderStatus {
   return {
-    definition: provider.definition,
+    definition: {
+      ...provider.definition,
+      base_url: provider.settings.base_url,
+      folder: provider.settings.folder
+    },
     health: provider.health,
     running: provider.running,
     paused: provider.paused,
     model_count: provider.models.length,
-    active_model: provider.models[0]?.display_name ?? null,
+    active_model: provider.models.find((model) => model.supports_chat)?.display_name ?? provider.models[0]?.display_name ?? null,
     latency_ms: provider.latency_ms,
     last_checked_ms: Date.now(),
-    message: "Mock provider state loaded."
+    message: provider.settings.enabled
+      ? "Browser fallback simulates local provider endpoint."
+      : "Provider disabled in settings."
   };
 }
 
 function emitProviderStatus(status: ProviderStatus) {
-  window.dispatchEvent(
-    new CustomEvent("local-ai-router:provider-health-changed", { detail: status })
-  );
+  window.dispatchEvent(new CustomEvent("local-ai-router:provider-health-changed", { detail: status }));
 }
 
 function providerSeed(
@@ -323,34 +401,43 @@ function providerSeed(
   baseUrl: string,
   folder: string,
   models: ProviderModel[],
-  running: boolean
-) {
+  notes: string
+): FallbackProvider {
+  const definition = {
+    id,
+    name,
+    kind,
+    base_url: baseUrl,
+    folder,
+    capabilities: [
+      "Health",
+      "ListModels",
+      "Chat",
+      "StreamingChat",
+      "StartStop",
+      "InstallModel",
+      "PauseResumeTasks",
+      "Logs",
+      "ProviderFolder"
+    ] as ProviderCapability[]
+  };
   return {
-    definition: {
-      id,
-      name,
-      kind,
+    definition,
+    settings: {
+      provider_id: id,
+      enabled: true,
       base_url: baseUrl,
       folder,
-      capabilities: [
-        "Health",
-        "ListModels",
-        "Chat",
-        "StreamingChat",
-        "StartStop",
-        "InstallModel",
-        "UninstallModel",
-        "PauseResumeTasks",
-        "Logs",
-        "ProviderFolder"
-      ] as ProviderCapability[]
+      launch_command: null,
+      api_key_configured: false,
+      notes
     },
     models,
-    running,
+    running: true,
     paused: false,
-    health: running ? "Healthy" as const : "Stopped" as const,
-    latency_ms: running ? 42 : null,
-    logs: [logEntry(id, "info", "Mock provider initialized.")]
+    health: "Healthy",
+    latency_ms: 42,
+    logs: [logEntry(id, "info", "Local provider adapter initialized.")]
   };
 }
 
@@ -359,15 +446,54 @@ function providerModel(
   displayName: string,
   format: string,
   sizeBytes: number,
-  installed: boolean
+  supportsChat: boolean
 ): ProviderModel {
   return {
     id,
     display_name: displayName,
     format,
     size_bytes: sizeBytes,
-    installed,
-    supports_chat: true
+    installed: true,
+    supports_chat: supportsChat
+  };
+}
+
+function installPlanFor(provider: FallbackProvider): ProviderInstallPlan {
+  const sharedNotes = [
+    "Dry-run only: no commands are executed and no model weights are downloaded.",
+    `Configured endpoint: ${provider.settings.base_url}`
+  ];
+  const commandsByKind: Record<ProviderKind, string[]> = {
+    Ollama: ["brew install ollama", "ollama serve", "ollama pull llama3.1:8b"],
+    LmStudio: [
+      "Install LM Studio desktop app manually.",
+      "Enable Local Server in LM Studio on port 1234.",
+      "Confirm http://127.0.0.1:1234/v1/models responds."
+    ],
+    MlxLm: [
+      "python3 -m venv .venv-mlx-lm",
+      ".venv-mlx-lm/bin/pip install mlx-lm",
+      ".venv-mlx-lm/bin/python -m mlx_lm.server --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --port 8080"
+    ],
+    LlamaCpp: [
+      "brew install llama.cpp",
+      "llama-server -m /path/to/model.gguf --host 127.0.0.1 --port 8081",
+      "Confirm http://127.0.0.1:8081/v1/models responds."
+    ],
+    OpenAiCompatible: [
+      "Start your local OpenAI-compatible server.",
+      "Set the Base URL to the server's /v1 endpoint.",
+      "Confirm the /models and /chat/completions endpoints respond."
+    ]
+  };
+  return {
+    provider_id: provider.definition.id,
+    dry_run: true,
+    summary: `Dry-run setup plan for ${provider.definition.name}`,
+    commands: commandsByKind[provider.definition.kind],
+    notes: provider.settings.launch_command
+      ? [...sharedNotes, `Configured launch command for Stage 7: ${provider.settings.launch_command}`]
+      : sharedNotes
   };
 }
 
@@ -380,8 +506,12 @@ function logEntry(providerId: string, level: string, message: string): ProviderL
   };
 }
 
-function cloneProviders(providers: typeof fallbackProviders): typeof fallbackProviders {
+function cloneProviders(providers: FallbackProvider[]): FallbackProvider[] {
   return JSON.parse(JSON.stringify(providers));
+}
+
+function normalizeBaseUrl(input: string): string {
+  return input.trim().replace(/\/+$/, "");
 }
 
 function isTauriRuntime(): boolean {

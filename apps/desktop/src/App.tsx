@@ -59,22 +59,27 @@ import {
 } from "./modelCatalog";
 import {
   type ProviderChatResponse,
+  type ProviderInstallPlan,
   type ProviderLogEntry,
   type ProviderModel,
+  type ProviderSettings,
   type ProviderStatus,
   getProviderFolder,
   getProviderLogs,
+  getProviderSettings,
   listProviderModels,
   listProviderStatuses,
   pauseAllProviders,
   pauseProviderTasks,
+  previewProviderInstallPlan,
   refreshProviderHealth,
   resumeAllProviders,
   resumeProviderTasks,
   sendProviderTestChat,
   startProvider,
   stopProvider,
-  subscribeProviderHealth
+  subscribeProviderHealth,
+  updateProviderSettings
 } from "./providers";
 
 type PageId =
@@ -346,7 +351,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 5 providers</span>
+          <span>Stage 6 adapters</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -1149,11 +1154,14 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [logs, setLogs] = useState<ProviderLogEntry[]>([]);
+  const [settings, setSettings] = useState<ProviderSettings | null>(null);
+  const [settingsDraft, setSettingsDraft] = useState<ProviderSettings | null>(null);
+  const [installPlan, setInstallPlan] = useState<ProviderInstallPlan | null>(null);
   const [folder, setFolder] = useState("");
-  const [prompt, setPrompt] = useState("Say hello from the mock provider.");
+  const [prompt, setPrompt] = useState("Say ready from the local provider.");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [chatResponse, setChatResponse] = useState<ProviderChatResponse | null>(null);
-  const [statusMessage, setStatusMessage] = useState("Loading mock providers...");
+  const [statusMessage, setStatusMessage] = useState("Loading local providers...");
   const [error, setError] = useState<string | null>(null);
   const appPaused = appState.lifecycle_state === "Paused";
 
@@ -1165,7 +1173,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
         if (ignore) return;
         setStatuses(nextStatuses);
         setSelectedProviderId((current) => current ?? nextStatuses[0]?.definition.id ?? null);
-        setStatusMessage(`${nextStatuses.length} mock providers loaded.`);
+        setStatusMessage(`${nextStatuses.length} local provider adapters loaded.`);
       })
       .catch((err) => {
         if (ignore) return;
@@ -1194,13 +1202,17 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
     Promise.all([
       listProviderModels(selectedProviderId),
       getProviderLogs(selectedProviderId),
-      getProviderFolder(selectedProviderId)
+      getProviderFolder(selectedProviderId),
+      getProviderSettings(selectedProviderId)
     ])
-      .then(([nextModels, nextLogs, nextFolder]) => {
+      .then(([nextModels, nextLogs, nextFolder, nextSettings]) => {
         if (ignore) return;
         setModels(nextModels);
         setLogs(nextLogs);
         setFolder(nextFolder);
+        setSettings(nextSettings);
+        setSettingsDraft(nextSettings);
+        setInstallPlan(null);
         setSelectedModelId((current) => current ?? nextModels[0]?.id ?? null);
       })
       .catch((err) => {
@@ -1211,7 +1223,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
     return () => {
       ignore = true;
     };
-  }, [selectedProviderId, statuses]);
+  }, [selectedProviderId]);
 
   useEffect(() => {
     if (statuses.length === 0) return;
@@ -1241,7 +1253,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
     setError(null);
     const nextStatuses = await refreshProviderHealth();
     setStatuses(nextStatuses);
-    setStatusMessage("Provider health simulation refreshed.");
+    setStatusMessage("Provider health checks refreshed.");
   }, []);
 
   const handleStartStop = useCallback(async () => {
@@ -1276,13 +1288,50 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
       });
       setChatResponse(response);
       setLogs(await getProviderLogs(selectedStatus.definition.id));
-      setStatusMessage("Mock test chat completed.");
+      setStatusMessage("Local provider test chat completed.");
     } catch (err) {
       setError(errorMessage(err));
       setLogs(await getProviderLogs(selectedStatus.definition.id));
-      setStatusMessage("Mock test chat rejected.");
+      setStatusMessage("Local provider test chat rejected.");
     }
   }, [prompt, selectedModelId, selectedStatus]);
+
+  const handleSaveSettings = useCallback(async () => {
+    if (!settingsDraft) return;
+    setError(null);
+    setInstallPlan(null);
+    try {
+      const nextStatus = await updateProviderSettings({
+        provider_id: settingsDraft.provider_id,
+        enabled: settingsDraft.enabled,
+        base_url: settingsDraft.base_url,
+        folder: settingsDraft.folder,
+        launch_command: settingsDraft.launch_command
+      });
+      updateOneStatus(nextStatus);
+      const nextSettings = await getProviderSettings(settingsDraft.provider_id);
+      setSettings(nextSettings);
+      setSettingsDraft(nextSettings);
+      setFolder(nextSettings.folder);
+      setStatusMessage("Provider settings saved.");
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Provider settings save failed.");
+    }
+  }, [settingsDraft, updateOneStatus]);
+
+  const handlePreviewInstallPlan = useCallback(async () => {
+    if (!selectedStatus) return;
+    setError(null);
+    try {
+      const plan = await previewProviderInstallPlan(selectedStatus.definition.id);
+      setInstallPlan(plan);
+      setStatusMessage("Dry-run install plan generated.");
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Dry-run install plan failed.");
+    }
+  }, [selectedStatus]);
 
   if (statuses.length === 0) {
     return (
@@ -1291,7 +1340,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
           <div className="loading-state">
             <Cloud size={22} />
             <strong>{statusMessage}</strong>
-            {error ? <span>{error}</span> : <span>Preparing mocked provider adapters.</span>}
+            {error ? <span>{error}</span> : <span>Preparing local provider adapters.</span>}
           </div>
         </Panel>
       </div>
@@ -1300,12 +1349,12 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
 
   return (
     <div className="providers-page">
-      <Panel title="Mock Provider Adapters">
+      <Panel title="Local Provider Adapters">
         <div className="provider-toolbar">
           <div className="hardware-title">
             <Cloud size={24} />
             <div>
-              <strong>{selectedStatus?.definition.name ?? "Mock providers"}</strong>
+              <strong>{selectedStatus?.definition.name ?? "Local providers"}</strong>
               <span>{statusMessage}</span>
             </div>
           </div>
@@ -1363,6 +1412,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
                 ["Paused", selectedStatus.paused ? "Yes" : "No"],
                 ["Active Model", selectedStatus.active_model ?? "None"],
                 ["Latency", selectedStatus.latency_ms ? `${selectedStatus.latency_ms} ms` : "Not available"],
+                ["Endpoint", selectedStatus.definition.base_url],
                 ["Folder", folder]
               ]}
             />
@@ -1379,6 +1429,77 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
                 {selectedStatus.paused ? "Resume tasks" : "Pause tasks"}
               </button>
             </div>
+          </Panel>
+
+          <Panel title="Provider Settings" className="provider-settings-panel">
+            {settingsDraft ? (
+              <div className="provider-settings-form">
+                <label className="compact-check">
+                  <input
+                    checked={settingsDraft.enabled}
+                    onChange={(event) =>
+                      setSettingsDraft((current) =>
+                        current ? { ...current, enabled: event.target.checked } : current
+                      )
+                    }
+                    type="checkbox"
+                  />
+                  Enabled
+                </label>
+                <label>
+                  <span>Base URL</span>
+                  <input
+                    aria-label="Provider base URL"
+                    onChange={(event) =>
+                      setSettingsDraft((current) =>
+                        current ? { ...current, base_url: event.target.value } : current
+                      )
+                    }
+                    value={settingsDraft.base_url}
+                  />
+                </label>
+                <label>
+                  <span>Provider folder</span>
+                  <input
+                    aria-label="Provider folder"
+                    onChange={(event) =>
+                      setSettingsDraft((current) =>
+                        current ? { ...current, folder: event.target.value } : current
+                      )
+                    }
+                    value={settingsDraft.folder}
+                  />
+                </label>
+                <label>
+                  <span>Launch command</span>
+                  <input
+                    aria-label="Provider launch command"
+                    onChange={(event) =>
+                      setSettingsDraft((current) =>
+                        current ? { ...current, launch_command: event.target.value || null } : current
+                      )
+                    }
+                    placeholder="Stage 7 process hook"
+                    value={settingsDraft.launch_command ?? ""}
+                  />
+                </label>
+                <p className="fine-print">
+                  {settings?.notes ?? "Local adapter settings are loaded for the selected provider."}
+                </p>
+                <div className="provider-actions">
+                  <button className="secondary-button" onClick={handleSaveSettings} type="button">
+                    <Settings size={16} />
+                    Save settings
+                  </button>
+                  <button className="secondary-button" onClick={handlePreviewInstallPlan} type="button">
+                    <TerminalSquare size={16} />
+                    Dry-run install plan
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="fine-print">Select a provider to edit local endpoint settings.</p>
+            )}
           </Panel>
 
           <Panel title="Model Listing">
@@ -1408,7 +1529,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
             </table>
           </Panel>
 
-          <Panel title="Mock Test Chat" className="provider-chat-panel">
+          <Panel title="Local Test Chat" className="provider-chat-panel">
             <div className="provider-chat-form">
               <select
                 aria-label="Provider test model"
@@ -1433,7 +1554,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
                 type="button"
               >
                 <MessageSquare size={16} />
-                Send mock chat
+                Test local chat
               </button>
             </div>
             {chatResponse ? (
@@ -1446,10 +1567,32 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
               </div>
             ) : (
               <p className="fine-print">
-                Mock chat is blocked when the provider is stopped or tasks are paused.
+                In Tauri, this sends a tiny request to the selected local endpoint. Browser mode uses
+                a simulated fallback. Chat is blocked when the provider is disabled or tasks are paused.
               </p>
             )}
           </Panel>
+
+          {installPlan ? (
+            <Panel title="Dry-Run Install Plan" className="provider-plan-panel">
+              <div className="install-plan">
+                <div className="plan-heading">
+                  <strong>{installPlan.summary}</strong>
+                  <span className="fit-pill tight">{installPlan.dry_run ? "Dry run" : "Runnable"}</span>
+                </div>
+                <div className="command-list">
+                  {installPlan.commands.map((command) => (
+                    <code key={command}>{command}</code>
+                  ))}
+                </div>
+                <div className="reason-list">
+                  {installPlan.notes.map((note) => (
+                    <span key={note}>{note}</span>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+          ) : null}
 
           <Panel title="Provider Logs">
             <div className="provider-log-list">

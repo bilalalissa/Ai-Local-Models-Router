@@ -6,12 +6,13 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 5: provider adapter layer with mocked
-providers. The Tauri desktop shell exists, exposes persisted pause/resume state,
-includes native hardware probing and specs export, scores a seeded local model
-catalog, and now includes a mock provider adapter layer with provider cards,
-health simulation, model listing, mock chat, logs, and pause/resume task hooks.
-Real provider integrations, model routing execution, installers, remote broker
+This repository is currently at Stage 6: real local provider adapters. The
+Tauri desktop shell exists, exposes persisted pause/resume state, includes
+native hardware probing and specs export, scores a seeded local model catalog,
+and now includes local HTTP adapters for Ollama, LM Studio, custom
+OpenAI-compatible servers, MLX-LM, and llama.cpp with health checks, model
+listing, tiny test chat, settings, dry-run setup plans, logs, and pause/resume
+task hooks. Model routing execution, real installers/downloads, remote broker
 behavior, and model/update automation are intentionally deferred to later
 approved stages.
 
@@ -62,6 +63,9 @@ start the next implementation stage until the user explicitly approves it.
   mock providers, provider health simulation, model listing, mock chat, logs,
   provider folder access, and provider pause/resume task hooks wired to app
   pause state.
+- Stage 6 real local providers: Ollama, LM Studio, custom OpenAI-compatible,
+  MLX-LM, and llama.cpp local HTTP adapters with health checks, model listing,
+  tiny test chat, settings UI, dry-run setup plans, and pause-aware task gates.
 
 ## Planned Stack
 
@@ -111,10 +115,11 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 5 note: providers are mocked and fixture-driven. Real Ollama, LM Studio,
-MLX-LM, custom OpenAI-compatible, and llama.cpp process integration starts in
-Stage 6. Model downloads, router decisions, updater checks, notifications, and
-remote broker workers do not exist yet.
+Stage 6 note: provider adapters call local HTTP endpoints when running inside
+Tauri. Browser/Vite development uses simulated local-provider fallback data for
+UI testing. Start/stop actions enable or disable adapters; real external process
+launch and model downloads are deferred to Stage 7. Router decisions, updater
+checks, notifications, and remote broker workers do not exist yet.
 
 ## Visual Baseline
 
@@ -138,7 +143,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 3 - Hardware Detection and Specs Export
 - [x] Stage 4 - Model Catalog and Compatibility Scoring
 - [x] Stage 5 - Provider Adapter Layer With Mocked Providers
-- [ ] Stage 6 - Real Local Provider Adapters
+- [x] Stage 6 - Real Local Provider Adapters
 - [ ] Stage 7 - Runtime and Model Installation Flow
 - [ ] Stage 8 - Router Auto/Manual/Forced Model Selection
 - [ ] Stage 9 - Notifications and Background Behavior
@@ -220,7 +225,7 @@ marked as a stub.
 - Test provider behavior and pause behavior.
 - Stop and ask for approval.
 
-### Stage 6 - Real Local Provider Adapters
+### [x] Stage 6 - Real Local Provider Adapters
 
 - Implement Ollama, LM Studio, custom OpenAI-compatible, MLX-LM Apple Silicon,
   and llama.cpp/custom adapters.

@@ -1185,11 +1185,35 @@ button:disabled {
   margin-top: 16px;
 }
 
+.provider-settings-form,
+.provider-settings-panel label:not(.compact-check) {
+  display: grid;
+  gap: 10px;
+}
+
+.provider-settings-panel label:not(.compact-check) span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.provider-settings-panel input[aria-label] {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 10px;
+  background: #f8fafc;
+  color: var(--text);
+  font: inherit;
+}
+
 .provider-model-table tbody tr {
   cursor: pointer;
 }
 
-.provider-chat-panel {
+.provider-chat-panel,
+.provider-plan-panel {
   grid-column: 1 / -1;
 }
 
@@ -1262,6 +1286,34 @@ button:disabled {
 .provider-log-row strong {
   color: var(--text);
   text-transform: uppercase;
+}
+
+.install-plan {
+  display: grid;
+  gap: 12px;
+}
+
+.plan-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.command-list {
+  display: grid;
+  gap: 8px;
+}
+
+.command-list code {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #f8fafc;
+  color: #182235;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .empty-header {

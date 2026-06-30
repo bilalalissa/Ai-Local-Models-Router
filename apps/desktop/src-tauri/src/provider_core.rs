@@ -1,6 +1,13 @@
 use crate::model_catalog::ProviderKind;
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use serde_json::{json, Value};
+use std::{
+    io::{Read, Write},
+    net::{TcpStream, ToSocketAddrs},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+const REQUEST_TIMEOUT: Duration = Duration::from_millis(900);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ProviderHealth {
@@ -84,10 +91,39 @@ pub struct ProviderChatResponse {
     pub latency_ms: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderSettings {
+    pub provider_id: String,
+    pub enabled: bool,
+    pub base_url: String,
+    pub folder: String,
+    pub launch_command: Option<String>,
+    pub api_key_configured: bool,
+    pub notes: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderSettingsPatch {
+    pub provider_id: String,
+    pub enabled: bool,
+    pub base_url: String,
+    pub folder: String,
+    pub launch_command: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderInstallPlan {
+    pub provider_id: String,
+    pub dry_run: bool,
+    pub summary: String,
+    pub commands: Vec<String>,
+    pub notes: Vec<String>,
+}
+
 pub trait ProviderAdapter {
     fn definition(&self) -> ProviderDefinition;
     fn health(&mut self) -> ProviderStatus;
-    fn list_models(&self) -> Vec<ProviderModel>;
+    fn list_models(&mut self) -> Result<Vec<ProviderModel>, String>;
     fn chat(&mut self, request: ProviderChatRequest) -> Result<ProviderChatResponse, String>;
     fn start(&mut self) -> ProviderStatus;
     fn stop(&mut self) -> ProviderStatus;
@@ -95,110 +131,69 @@ pub trait ProviderAdapter {
     fn resume_tasks(&mut self) -> ProviderStatus;
     fn logs(&self) -> Vec<ProviderLogEntry>;
     fn provider_folder(&self) -> String;
+    fn settings(&self) -> ProviderSettings;
+    fn update_settings(&mut self, patch: ProviderSettingsPatch) -> ProviderStatus;
+    fn install_plan(&self) -> ProviderInstallPlan;
 }
 
 #[derive(Debug)]
 pub struct ProviderManager {
-    providers: Vec<MockProvider>,
+    providers: Vec<ProviderInstance>,
 }
 
 impl ProviderManager {
     pub fn seeded() -> Self {
         Self {
             providers: vec![
-                MockProvider::new(
-                    "mock-mlx",
-                    "MLX-LM Server",
-                    ProviderKind::MlxLm,
-                    "http://127.0.0.1:8080",
-                    "~/Library/Application Support/Local AI Router/providers/mlx-lm",
-                    vec![
-                        model(
-                            "qwen2-5-coder-7b-mlx",
-                            "Qwen2.5 Coder 7B MLX",
-                            "MLX / 4-bit",
-                            4_831_838_208,
-                            true,
-                        ),
-                        model(
-                            "phi-3-5-mini-q4",
-                            "Phi-3.5 Mini",
-                            "GGUF / Q4_K_M",
-                            2_684_354_560,
-                            true,
-                        ),
-                    ],
-                    true,
-                ),
-                MockProvider::new(
-                    "mock-ollama",
+                local_provider(
+                    "ollama-local",
                     "Ollama",
                     ProviderKind::Ollama,
+                    ProviderProtocol::Ollama,
                     "http://127.0.0.1:11434",
                     "~/Library/Application Support/Local AI Router/providers/ollama",
-                    vec![
-                        model(
-                            "llama-3-1-8b-q4",
-                            "Llama 3.1 8B Instruct Q4",
-                            "GGUF / Q4_K_M",
-                            5_368_709_120,
-                            true,
-                        ),
-                        model(
-                            "phi-3-5-mini-q4",
-                            "Phi-3.5 Mini Instruct Q4",
-                            "GGUF / Q4_K_M",
-                            2_684_354_560,
-                            true,
-                        ),
-                        model(
-                            "nomic-embed-text",
-                            "Nomic Embed Text",
-                            "GGUF / F16",
-                            629_145_600,
-                            true,
-                        ),
-                    ],
-                    true,
+                    Some("llama3.1:8b"),
+                    "Ollama local HTTP API at /api/tags and /api/generate.",
                 ),
-                MockProvider::new(
-                    "mock-lm-studio",
+                local_provider(
+                    "lm-studio-local",
                     "LM Studio",
                     ProviderKind::LmStudio,
-                    "http://127.0.0.1:1234",
+                    ProviderProtocol::OpenAiCompatible,
+                    "http://127.0.0.1:1234/v1",
                     "~/Library/Application Support/Local AI Router/providers/lm-studio",
-                    vec![
-                        model(
-                            "mistral-7b-instruct-q4",
-                            "Mistral 7B Instruct Q4",
-                            "GGUF / Q4_K_M",
-                            4_563_402_752,
-                            false,
-                        ),
-                        model(
-                            "qwen2-5-coder-7b-q4",
-                            "Qwen2.5 Coder 7B Q4",
-                            "GGUF / Q4_K_M",
-                            5_100_273_664,
-                            false,
-                        ),
-                    ],
-                    false,
+                    Some("local-model"),
+                    "LM Studio local server with the OpenAI-compatible API enabled.",
                 ),
-                MockProvider::new(
-                    "mock-openai-compatible",
+                local_provider(
+                    "openai-compatible-local",
                     "Custom OpenAI-Compatible",
                     ProviderKind::OpenAiCompatible,
+                    ProviderProtocol::OpenAiCompatible,
                     "http://127.0.0.1:5001/v1",
                     "~/Library/Application Support/Local AI Router/providers/custom-openai",
-                    vec![model(
-                        "custom-local-chat",
-                        "Custom Local Chat",
-                        "OpenAI-compatible",
-                        0,
-                        true,
-                    )],
-                    false,
+                    Some("local-model"),
+                    "Custom local OpenAI-compatible endpoint. API key storage is deferred.",
+                ),
+                local_provider(
+                    "mlx-lm-local",
+                    "MLX-LM Server",
+                    ProviderKind::MlxLm,
+                    ProviderProtocol::OpenAiCompatible,
+                    "http://127.0.0.1:8080/v1",
+                    "~/Library/Application Support/Local AI Router/providers/mlx-lm",
+                    Some("mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"),
+                    "MLX-LM OpenAI-compatible server for Apple Silicon.",
+                ),
+                local_provider(
+                    "llama-cpp-local",
+                    "llama.cpp Server",
+                    ProviderKind::LlamaCpp,
+                    ProviderProtocol::OpenAiCompatible,
+                    "http://127.0.0.1:8081/v1",
+                    "~/Library/Application Support/Local AI Router/providers/llama-cpp",
+                    Some("local-gguf"),
+                    "llama.cpp server with OpenAI-compatible endpoints.",
                 ),
             ],
         }
@@ -207,16 +202,16 @@ impl ProviderManager {
     pub fn statuses(&mut self) -> Vec<ProviderStatus> {
         self.providers
             .iter_mut()
-            .map(MockProvider::health)
+            .map(ProviderInstance::health)
             .collect()
     }
 
     pub fn start(&mut self, provider_id: &str) -> Result<ProviderStatus, String> {
-        self.provider_mut(provider_id).map(MockProvider::start)
+        self.provider_mut(provider_id).map(ProviderInstance::start)
     }
 
     pub fn stop(&mut self, provider_id: &str) -> Result<ProviderStatus, String> {
-        self.provider_mut(provider_id).map(MockProvider::stop)
+        self.provider_mut(provider_id).map(ProviderInstance::stop)
     }
 
     pub fn pause(&mut self, provider_id: &str, reason: &str) -> Result<ProviderStatus, String> {
@@ -226,7 +221,7 @@ impl ProviderManager {
 
     pub fn resume(&mut self, provider_id: &str) -> Result<ProviderStatus, String> {
         self.provider_mut(provider_id)
-            .map(MockProvider::resume_tasks)
+            .map(ProviderInstance::resume_tasks)
     }
 
     pub fn pause_all(&mut self, reason: &str) -> Vec<ProviderStatus> {
@@ -239,12 +234,13 @@ impl ProviderManager {
     pub fn resume_all(&mut self) -> Vec<ProviderStatus> {
         self.providers
             .iter_mut()
-            .map(MockProvider::resume_tasks)
+            .map(ProviderInstance::resume_tasks)
             .collect()
     }
 
-    pub fn list_models(&self, provider_id: &str) -> Result<Vec<ProviderModel>, String> {
-        self.provider(provider_id).map(MockProvider::list_models)
+    pub fn list_models(&mut self, provider_id: &str) -> Result<Vec<ProviderModel>, String> {
+        self.provider_mut(provider_id)
+            .and_then(ProviderInstance::list_models)
     }
 
     pub fn chat(&mut self, request: ProviderChatRequest) -> Result<ProviderChatResponse, String> {
@@ -258,10 +254,10 @@ impl ProviderManager {
             .iter()
             .filter(|provider| {
                 provider_id
-                    .map(|id| provider.definition.id == id)
+                    .map(|id| provider.definition().id == id)
                     .unwrap_or(true)
             })
-            .flat_map(MockProvider::logs)
+            .flat_map(ProviderInstance::logs)
             .collect::<Vec<_>>();
         entries.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms));
         entries
@@ -269,95 +265,235 @@ impl ProviderManager {
 
     pub fn folder(&self, provider_id: &str) -> Result<String, String> {
         self.provider(provider_id)
-            .map(|provider| provider.provider_folder())
+            .map(ProviderInstance::provider_folder)
     }
 
-    fn provider(&self, provider_id: &str) -> Result<&MockProvider, String> {
+    pub fn settings(&self, provider_id: &str) -> Result<ProviderSettings, String> {
+        self.provider(provider_id).map(ProviderInstance::settings)
+    }
+
+    pub fn update_settings(
+        &mut self,
+        patch: ProviderSettingsPatch,
+    ) -> Result<ProviderStatus, String> {
+        self.provider_mut(&patch.provider_id)
+            .map(|provider| provider.update_settings(patch))
+    }
+
+    pub fn install_plan(&self, provider_id: &str) -> Result<ProviderInstallPlan, String> {
+        self.provider(provider_id)
+            .map(ProviderInstance::install_plan)
+    }
+
+    fn provider(&self, provider_id: &str) -> Result<&ProviderInstance, String> {
         self.providers
             .iter()
-            .find(|provider| provider.definition.id == provider_id)
+            .find(|provider| provider.definition().id == provider_id)
             .ok_or_else(|| format!("unknown provider: {provider_id}"))
     }
 
-    fn provider_mut(&mut self, provider_id: &str) -> Result<&mut MockProvider, String> {
+    fn provider_mut(&mut self, provider_id: &str) -> Result<&mut ProviderInstance, String> {
         self.providers
             .iter_mut()
-            .find(|provider| provider.definition.id == provider_id)
+            .find(|provider| provider.definition().id == provider_id)
             .ok_or_else(|| format!("unknown provider: {provider_id}"))
+    }
+}
+
+#[derive(Debug)]
+enum ProviderInstance {
+    LocalHttp(LocalHttpProvider),
+}
+
+impl ProviderAdapter for ProviderInstance {
+    fn definition(&self) -> ProviderDefinition {
+        match self {
+            Self::LocalHttp(provider) => provider.definition(),
+        }
+    }
+
+    fn health(&mut self) -> ProviderStatus {
+        match self {
+            Self::LocalHttp(provider) => provider.health(),
+        }
+    }
+
+    fn list_models(&mut self) -> Result<Vec<ProviderModel>, String> {
+        match self {
+            Self::LocalHttp(provider) => provider.list_models(),
+        }
+    }
+
+    fn chat(&mut self, request: ProviderChatRequest) -> Result<ProviderChatResponse, String> {
+        match self {
+            Self::LocalHttp(provider) => provider.chat(request),
+        }
+    }
+
+    fn start(&mut self) -> ProviderStatus {
+        match self {
+            Self::LocalHttp(provider) => provider.start(),
+        }
+    }
+
+    fn stop(&mut self) -> ProviderStatus {
+        match self {
+            Self::LocalHttp(provider) => provider.stop(),
+        }
+    }
+
+    fn pause_tasks(&mut self, reason: &str) -> ProviderStatus {
+        match self {
+            Self::LocalHttp(provider) => provider.pause_tasks(reason),
+        }
+    }
+
+    fn resume_tasks(&mut self) -> ProviderStatus {
+        match self {
+            Self::LocalHttp(provider) => provider.resume_tasks(),
+        }
+    }
+
+    fn logs(&self) -> Vec<ProviderLogEntry> {
+        match self {
+            Self::LocalHttp(provider) => provider.logs(),
+        }
+    }
+
+    fn provider_folder(&self) -> String {
+        match self {
+            Self::LocalHttp(provider) => provider.provider_folder(),
+        }
+    }
+
+    fn settings(&self) -> ProviderSettings {
+        match self {
+            Self::LocalHttp(provider) => provider.settings(),
+        }
+    }
+
+    fn update_settings(&mut self, patch: ProviderSettingsPatch) -> ProviderStatus {
+        match self {
+            Self::LocalHttp(provider) => provider.update_settings(patch),
+        }
+    }
+
+    fn install_plan(&self) -> ProviderInstallPlan {
+        match self {
+            Self::LocalHttp(provider) => provider.install_plan(),
+        }
     }
 }
 
 #[derive(Clone, Debug)]
-struct MockProvider {
+enum ProviderProtocol {
+    Ollama,
+    OpenAiCompatible,
+}
+
+#[derive(Clone, Debug)]
+struct LocalHttpProvider {
     definition: ProviderDefinition,
-    models: Vec<ProviderModel>,
-    running: bool,
+    protocol: ProviderProtocol,
+    settings: ProviderSettings,
+    default_model_id: Option<String>,
     paused: bool,
-    health: ProviderHealth,
-    latency_ms: Option<u32>,
-    health_tick: u32,
+    last_health: ProviderHealth,
+    last_running: bool,
+    last_latency_ms: Option<u32>,
+    last_models: Vec<ProviderModel>,
     logs: Vec<ProviderLogEntry>,
 }
 
-impl MockProvider {
-    fn new(
-        id: &str,
-        name: &str,
-        kind: ProviderKind,
-        base_url: &str,
-        folder: &str,
-        models: Vec<ProviderModel>,
-        running: bool,
-    ) -> Self {
-        let health = if running {
-            ProviderHealth::Healthy
-        } else {
-            ProviderHealth::Stopped
-        };
-        let mut provider = Self {
-            definition: ProviderDefinition {
-                id: id.to_string(),
-                name: name.to_string(),
-                kind,
-                base_url: base_url.to_string(),
-                folder: folder.to_string(),
-                capabilities: vec![
-                    ProviderCapability::Health,
-                    ProviderCapability::ListModels,
-                    ProviderCapability::Chat,
-                    ProviderCapability::StreamingChat,
-                    ProviderCapability::StartStop,
-                    ProviderCapability::InstallModel,
-                    ProviderCapability::UninstallModel,
-                    ProviderCapability::PauseResumeTasks,
-                    ProviderCapability::Logs,
-                    ProviderCapability::ProviderFolder,
-                ],
-            },
-            models,
-            running,
-            paused: false,
-            health,
-            latency_ms: if running { Some(42) } else { None },
-            health_tick: 0,
-            logs: Vec::new(),
-        };
-        provider.push_log("info", "Mock provider initialized.");
-        provider
-    }
-
+impl LocalHttpProvider {
     fn status(&self, message: &str) -> ProviderStatus {
         ProviderStatus {
             definition: self.definition(),
-            health: self.health.clone(),
-            running: self.running,
+            health: self.last_health.clone(),
+            running: self.last_running,
             paused: self.paused,
-            model_count: self.models.len(),
-            active_model: self.models.first().map(|model| model.display_name.clone()),
-            latency_ms: self.latency_ms,
+            model_count: self.last_models.len(),
+            active_model: self
+                .last_models
+                .first()
+                .map(|model| model.display_name.clone()),
+            latency_ms: self.last_latency_ms,
             last_checked_ms: now_ms(),
             message: message.to_string(),
         }
+    }
+
+    fn apply_probe_result(
+        &mut self,
+        result: Result<(Vec<ProviderModel>, u32), String>,
+    ) -> ProviderStatus {
+        match result {
+            Ok((models, latency_ms)) => {
+                let model_count = models.len();
+                self.last_models = models;
+                self.last_running = true;
+                self.last_latency_ms = Some(latency_ms);
+                self.last_health = if model_count == 0 {
+                    ProviderHealth::Degraded
+                } else {
+                    ProviderHealth::Healthy
+                };
+                let message = if model_count == 0 {
+                    "Provider endpoint reached, but no models were listed."
+                } else {
+                    "Provider endpoint healthy."
+                };
+                self.push_log("debug", message);
+                self.status(message)
+            }
+            Err(err) => {
+                self.last_running = false;
+                self.last_latency_ms = None;
+                self.last_health = ProviderHealth::Stopped;
+                self.push_log("warn", &format!("Provider endpoint unavailable: {err}"));
+                self.status("Provider endpoint unavailable.")
+            }
+        }
+    }
+
+    fn fetch_models(&self) -> Result<(Vec<ProviderModel>, u32), String> {
+        match self.protocol {
+            ProviderProtocol::Ollama => {
+                let response =
+                    local_http_request(&self.settings.base_url, "GET", "/api/tags", None)?;
+                if response.status_code >= 400 {
+                    return Err(format!(
+                        "Ollama model list returned HTTP {}",
+                        response.status_code
+                    ));
+                }
+                Ok((parse_ollama_models(&response.body)?, response.latency_ms))
+            }
+            ProviderProtocol::OpenAiCompatible => {
+                let response = local_http_request(&self.settings.base_url, "GET", "/models", None)?;
+                if response.status_code >= 400 {
+                    return Err(format!(
+                        "OpenAI-compatible model list returned HTTP {}",
+                        response.status_code
+                    ));
+                }
+                Ok((parse_openai_models(&response.body)?, response.latency_ms))
+            }
+        }
+    }
+
+    fn selected_model_id(&mut self, request: &ProviderChatRequest) -> String {
+        request
+            .model_id
+            .clone()
+            .or_else(|| {
+                self.last_models
+                    .iter()
+                    .find(|model| model.supports_chat)
+                    .map(|model| model.id.clone())
+            })
+            .or_else(|| self.default_model_id.clone())
+            .unwrap_or_else(|| "local-model".to_string())
     }
 
     fn push_log(&mut self, level: &str, message: &str) {
@@ -370,109 +506,167 @@ impl MockProvider {
     }
 }
 
-impl ProviderAdapter for MockProvider {
+impl ProviderAdapter for LocalHttpProvider {
     fn definition(&self) -> ProviderDefinition {
-        self.definition.clone()
+        let mut definition = self.definition.clone();
+        definition.base_url = self.settings.base_url.clone();
+        definition.folder = self.settings.folder.clone();
+        definition
     }
 
     fn health(&mut self) -> ProviderStatus {
-        self.health_tick = self.health_tick.saturating_add(1);
-        if self.running && !self.paused {
-            self.health = if self.health_tick % 5 == 0 {
-                ProviderHealth::Degraded
-            } else {
-                ProviderHealth::Healthy
-            };
-            self.latency_ms = Some(35 + (self.health_tick % 4) * 11);
-            self.push_log("debug", "Mock health check completed.");
+        if !self.settings.enabled {
+            self.last_running = false;
+            self.last_latency_ms = None;
+            self.last_health = ProviderHealth::Stopped;
+            return self.status("Provider disabled in settings.");
         }
-        self.status("Mock health status refreshed.")
+        if self.paused {
+            self.last_health = ProviderHealth::Paused;
+            return self.status("Provider tasks are paused.");
+        }
+        let result = self.fetch_models();
+        self.apply_probe_result(result)
     }
 
-    fn list_models(&self) -> Vec<ProviderModel> {
-        self.models.clone()
+    fn list_models(&mut self) -> Result<Vec<ProviderModel>, String> {
+        if !self.settings.enabled {
+            return Ok(Vec::new());
+        }
+        if self.paused {
+            return Ok(self.last_models.clone());
+        }
+        match self.fetch_models() {
+            Ok((models, latency_ms)) => {
+                self.last_models = models.clone();
+                self.last_running = true;
+                self.last_latency_ms = Some(latency_ms);
+                self.last_health = if models.is_empty() {
+                    ProviderHealth::Degraded
+                } else {
+                    ProviderHealth::Healthy
+                };
+                self.push_log("debug", "Provider model list refreshed.");
+                Ok(models)
+            }
+            Err(err) => {
+                self.last_running = false;
+                self.last_latency_ms = None;
+                self.last_health = ProviderHealth::Stopped;
+                self.push_log("warn", &format!("Provider model list failed: {err}"));
+                Ok(self.last_models.clone())
+            }
+        }
     }
 
     fn chat(&mut self, request: ProviderChatRequest) -> Result<ProviderChatResponse, String> {
-        if !self.running {
-            self.push_log("warn", "Rejected mock chat while provider is stopped.");
-            return Err("provider is stopped".to_string());
+        if !self.settings.enabled {
+            self.push_log("warn", "Rejected test chat because provider is disabled.");
+            return Err("provider is disabled".to_string());
         }
         if self.paused {
             self.push_log(
                 "warn",
-                "Rejected mock chat while provider tasks are paused.",
+                "Rejected test chat while provider tasks are paused.",
             );
             return Err("provider tasks are paused".to_string());
         }
 
-        let model = request
-            .model_id
-            .as_deref()
-            .and_then(|id| self.models.iter().find(|model| model.id == id))
-            .or_else(|| self.models.iter().find(|model| model.supports_chat))
-            .ok_or_else(|| "provider has no chat-capable model".to_string())?
-            .clone();
+        let model_id = self.selected_model_id(&request);
         let prompt = request.prompt.trim();
-        let response = format!(
-            "[Mock:{}] {} is ready. Echo: {}",
-            self.definition.name,
-            model.display_name,
-            if prompt.is_empty() {
-                "(empty prompt)"
-            } else {
-                prompt
-            }
-        );
-        self.push_log("info", "Mock test chat completed.");
+        let body = match self.protocol {
+            ProviderProtocol::Ollama => json!({
+                "model": model_id,
+                "prompt": if prompt.is_empty() { "Say ready." } else { prompt },
+                "stream": false
+            }),
+            ProviderProtocol::OpenAiCompatible => json!({
+                "model": model_id,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": if prompt.is_empty() { "Say ready." } else { prompt }
+                    }
+                ],
+                "stream": false,
+                "max_tokens": 64
+            }),
+        };
+        let path = match self.protocol {
+            ProviderProtocol::Ollama => "/api/generate",
+            ProviderProtocol::OpenAiCompatible => "/chat/completions",
+        };
+        let response = local_http_request(&self.settings.base_url, "POST", path, Some(body))?;
+        if response.status_code >= 400 {
+            self.push_log(
+                "warn",
+                &format!("Provider test chat returned HTTP {}", response.status_code),
+            );
+            return Err(format!("provider returned HTTP {}", response.status_code));
+        }
+
+        let text = match self.protocol {
+            ProviderProtocol::Ollama => parse_ollama_chat(&response.body)?,
+            ProviderProtocol::OpenAiCompatible => parse_openai_chat(&response.body)?,
+        };
+        self.last_running = true;
+        self.last_latency_ms = Some(response.latency_ms);
+        self.last_health = ProviderHealth::Healthy;
+        self.push_log("info", "Local provider test chat completed.");
         Ok(ProviderChatResponse {
             provider_id: self.definition.id.clone(),
-            model_id: model.id,
-            response,
+            model_id,
+            response: text,
             tokens_in: prompt.split_whitespace().count() as u32,
-            tokens_out: 24,
-            latency_ms: self.latency_ms.unwrap_or(55),
+            tokens_out: 64,
+            latency_ms: response.latency_ms,
         })
     }
 
     fn start(&mut self) -> ProviderStatus {
-        self.running = true;
-        self.paused = false;
-        self.health = ProviderHealth::Healthy;
-        self.latency_ms = Some(48);
-        self.push_log("info", "Mock provider started.");
-        self.status("Provider started.")
+        if !self.settings.enabled {
+            self.settings.enabled = true;
+            self.push_log("info", "Provider enabled from start action.");
+        } else {
+            self.push_log(
+                "info",
+                "Start action refreshed endpoint health; process launch is a Stage 7 hook.",
+            );
+        }
+        self.health()
     }
 
     fn stop(&mut self) -> ProviderStatus {
-        self.running = false;
+        self.settings.enabled = false;
         self.paused = false;
-        self.health = ProviderHealth::Stopped;
-        self.latency_ms = None;
-        self.push_log("info", "Mock provider stopped.");
-        self.status("Provider stopped.")
+        self.last_running = false;
+        self.last_health = ProviderHealth::Stopped;
+        self.last_latency_ms = None;
+        self.push_log(
+            "info",
+            "Provider disabled. External process stop remains a Stage 7 hook.",
+        );
+        self.status("Provider disabled in settings.")
     }
 
     fn pause_tasks(&mut self, reason: &str) -> ProviderStatus {
-        if self.running {
+        if self.settings.enabled {
             self.paused = true;
-            self.health = ProviderHealth::Paused;
+            self.last_health = ProviderHealth::Paused;
             self.push_log("info", &format!("Provider tasks paused: {reason}"));
             self.status("Provider tasks paused.")
         } else {
-            self.push_log("debug", "Pause ignored because provider is stopped.");
-            self.status("Provider is stopped.")
+            self.status("Provider disabled in settings.")
         }
     }
 
     fn resume_tasks(&mut self) -> ProviderStatus {
-        if self.running {
+        if self.settings.enabled {
             self.paused = false;
-            self.health = ProviderHealth::Healthy;
             self.push_log("info", "Provider tasks resumed.");
-            self.status("Provider tasks resumed.")
+            self.health()
         } else {
-            self.status("Provider is stopped.")
+            self.status("Provider disabled in settings.")
         }
     }
 
@@ -481,8 +675,318 @@ impl ProviderAdapter for MockProvider {
     }
 
     fn provider_folder(&self) -> String {
-        self.definition.folder.clone()
+        self.settings.folder.clone()
     }
+
+    fn settings(&self) -> ProviderSettings {
+        self.settings.clone()
+    }
+
+    fn update_settings(&mut self, patch: ProviderSettingsPatch) -> ProviderStatus {
+        self.settings.enabled = patch.enabled;
+        self.settings.base_url = normalize_base_url(&patch.base_url);
+        self.settings.folder = patch.folder;
+        self.settings.launch_command = patch
+            .launch_command
+            .filter(|command| !command.trim().is_empty());
+        self.definition.base_url = self.settings.base_url.clone();
+        self.definition.folder = self.settings.folder.clone();
+        self.paused = false;
+        self.push_log("info", "Provider settings updated.");
+        self.health()
+    }
+
+    fn install_plan(&self) -> ProviderInstallPlan {
+        install_plan_for(&self.definition, &self.settings)
+    }
+}
+
+#[derive(Debug)]
+struct HttpResponse {
+    status_code: u16,
+    body: String,
+    latency_ms: u32,
+}
+
+#[derive(Debug)]
+struct UrlParts {
+    host: String,
+    port: u16,
+    prefix: String,
+}
+
+fn local_provider(
+    id: &str,
+    name: &str,
+    kind: ProviderKind,
+    protocol: ProviderProtocol,
+    base_url: &str,
+    folder: &str,
+    default_model_id: Option<&str>,
+    notes: &str,
+) -> ProviderInstance {
+    let definition = ProviderDefinition {
+        id: id.to_string(),
+        name: name.to_string(),
+        kind,
+        base_url: normalize_base_url(base_url),
+        folder: folder.to_string(),
+        capabilities: vec![
+            ProviderCapability::Health,
+            ProviderCapability::ListModels,
+            ProviderCapability::Chat,
+            ProviderCapability::StreamingChat,
+            ProviderCapability::StartStop,
+            ProviderCapability::InstallModel,
+            ProviderCapability::PauseResumeTasks,
+            ProviderCapability::Logs,
+            ProviderCapability::ProviderFolder,
+        ],
+    };
+    let settings = ProviderSettings {
+        provider_id: id.to_string(),
+        enabled: true,
+        base_url: definition.base_url.clone(),
+        folder: folder.to_string(),
+        launch_command: None,
+        api_key_configured: false,
+        notes: notes.to_string(),
+    };
+    let mut provider = LocalHttpProvider {
+        definition,
+        protocol,
+        settings,
+        default_model_id: default_model_id.map(str::to_string),
+        paused: false,
+        last_health: ProviderHealth::Stopped,
+        last_running: false,
+        last_latency_ms: None,
+        last_models: Vec::new(),
+        logs: Vec::new(),
+    };
+    provider.push_log("info", "Local provider adapter initialized.");
+    ProviderInstance::LocalHttp(provider)
+}
+
+fn install_plan_for(
+    definition: &ProviderDefinition,
+    settings: &ProviderSettings,
+) -> ProviderInstallPlan {
+    let mut notes = vec![
+        "Dry-run only: no commands are executed and no model weights are downloaded.".to_string(),
+        format!("Configured endpoint: {}", settings.base_url),
+    ];
+    let commands = match definition.kind {
+        ProviderKind::Ollama => vec![
+            "brew install ollama".to_string(),
+            "ollama serve".to_string(),
+            "ollama pull llama3.1:8b".to_string(),
+        ],
+        ProviderKind::LmStudio => vec![
+            "Install LM Studio desktop app manually.".to_string(),
+            "Enable Local Server in LM Studio on port 1234.".to_string(),
+            "Confirm http://127.0.0.1:1234/v1/models responds.".to_string(),
+        ],
+        ProviderKind::MlxLm => vec![
+            "python3 -m venv .venv-mlx-lm".to_string(),
+            ".venv-mlx-lm/bin/pip install mlx-lm".to_string(),
+            ".venv-mlx-lm/bin/python -m mlx_lm.server --model mlx-community/Qwen2.5-Coder-7B-Instruct-4bit --port 8080".to_string(),
+        ],
+        ProviderKind::LlamaCpp => vec![
+            "brew install llama.cpp".to_string(),
+            "llama-server -m /path/to/model.gguf --host 127.0.0.1 --port 8081".to_string(),
+            "Confirm http://127.0.0.1:8081/v1/models responds.".to_string(),
+        ],
+        ProviderKind::OpenAiCompatible => vec![
+            "Start your local OpenAI-compatible server.".to_string(),
+            "Set the Base URL to the server's /v1 endpoint.".to_string(),
+            "Confirm the /models and /chat/completions endpoints respond.".to_string(),
+        ],
+    };
+    if let Some(command) = &settings.launch_command {
+        notes.push(format!("Configured launch command for Stage 7: {command}"));
+    }
+    ProviderInstallPlan {
+        provider_id: definition.id.clone(),
+        dry_run: true,
+        summary: format!("Dry-run setup plan for {}", definition.name),
+        commands,
+        notes,
+    }
+}
+
+fn parse_ollama_models(body: &str) -> Result<Vec<ProviderModel>, String> {
+    let value: Value =
+        serde_json::from_str(body).map_err(|err| format!("invalid Ollama JSON: {err}"))?;
+    let models = value
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Ollama response missing models array".to_string())?;
+    Ok(models
+        .iter()
+        .filter_map(|item| {
+            let id = item
+                .get("name")
+                .or_else(|| item.get("model"))
+                .and_then(Value::as_str)?;
+            let details = item.get("details").unwrap_or(&Value::Null);
+            let family = details
+                .get("family")
+                .and_then(Value::as_str)
+                .unwrap_or("Ollama");
+            let quant = details
+                .get("quantization_level")
+                .and_then(Value::as_str)
+                .unwrap_or("local");
+            Some(model(
+                id,
+                id,
+                &format!("{family} / {quant}"),
+                item.get("size").and_then(Value::as_u64).unwrap_or_default(),
+                true,
+                !id.to_ascii_lowercase().contains("embed"),
+            ))
+        })
+        .collect())
+}
+
+fn parse_openai_models(body: &str) -> Result<Vec<ProviderModel>, String> {
+    let value: Value = serde_json::from_str(body)
+        .map_err(|err| format!("invalid OpenAI-compatible JSON: {err}"))?;
+    let models = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "OpenAI-compatible response missing data array".to_string())?;
+    Ok(models
+        .iter()
+        .filter_map(|item| {
+            let id = item.get("id").and_then(Value::as_str)?;
+            Some(model(
+                id,
+                id,
+                "OpenAI-compatible",
+                item.get("size").and_then(Value::as_u64).unwrap_or_default(),
+                true,
+                !id.to_ascii_lowercase().contains("embed"),
+            ))
+        })
+        .collect())
+}
+
+fn parse_ollama_chat(body: &str) -> Result<String, String> {
+    let value: Value =
+        serde_json::from_str(body).map_err(|err| format!("invalid Ollama chat JSON: {err}"))?;
+    value
+        .get("response")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "Ollama chat response missing response text".to_string())
+}
+
+fn parse_openai_chat(body: &str) -> Result<String, String> {
+    let value: Value = serde_json::from_str(body)
+        .map_err(|err| format!("invalid OpenAI-compatible chat JSON: {err}"))?;
+    value
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| {
+            "OpenAI-compatible chat response missing choices[0].message.content".to_string()
+        })
+}
+
+fn local_http_request(
+    base_url: &str,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Result<HttpResponse, String> {
+    let url = parse_http_url(base_url)?;
+    let request_path = join_paths(&url.prefix, path);
+    let body_text = body.map(|value| value.to_string()).unwrap_or_default();
+    let mut addrs = (url.host.as_str(), url.port)
+        .to_socket_addrs()
+        .map_err(|err| format!("could not resolve {}:{}: {err}", url.host, url.port))?;
+    let addr = addrs
+        .next()
+        .ok_or_else(|| format!("no socket address for {}:{}", url.host, url.port))?;
+    let start = Instant::now();
+    let mut stream = TcpStream::connect_timeout(&addr, REQUEST_TIMEOUT)
+        .map_err(|err| format!("connect failed: {err}"))?;
+    stream
+        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|err| format!("read timeout setup failed: {err}"))?;
+    stream
+        .set_write_timeout(Some(REQUEST_TIMEOUT))
+        .map_err(|err| format!("write timeout setup failed: {err}"))?;
+    let request = format!(
+        "{method} {request_path} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        url.host,
+        body_text.len(),
+        body_text
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|err| format!("request write failed: {err}"))?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|err| format!("response read failed: {err}"))?;
+    let latency_ms = start.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+    let (head, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "malformed HTTP response".to_string())?;
+    let status_code = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse::<u16>().ok())
+        .ok_or_else(|| "malformed HTTP status line".to_string())?;
+    Ok(HttpResponse {
+        status_code,
+        body: body.to_string(),
+        latency_ms,
+    })
+}
+
+fn parse_http_url(input: &str) -> Result<UrlParts, String> {
+    let trimmed = normalize_base_url(input);
+    let without_scheme = trimmed.strip_prefix("http://").ok_or_else(|| {
+        "only local http:// provider endpoints are supported in Stage 6".to_string()
+    })?;
+    let (authority, prefix) = without_scheme
+        .split_once('/')
+        .map(|(authority, path)| (authority, format!("/{path}")))
+        .unwrap_or((without_scheme, "/".to_string()));
+    if authority.is_empty() {
+        return Err("provider URL missing host".to_string());
+    }
+    let (host, port) = if let Some((host, port)) = authority.rsplit_once(':') {
+        let parsed_port = port
+            .parse::<u16>()
+            .map_err(|_| format!("invalid provider port: {port}"))?;
+        (host.to_string(), parsed_port)
+    } else {
+        (authority.to_string(), 80)
+    };
+    Ok(UrlParts { host, port, prefix })
+}
+
+fn join_paths(prefix: &str, path: &str) -> String {
+    let normalized_prefix = if prefix == "/" {
+        ""
+    } else {
+        prefix.trim_end_matches('/')
+    };
+    format!("{normalized_prefix}/{}", path.trim_start_matches('/'))
+}
+
+fn normalize_base_url(input: &str) -> String {
+    input.trim().trim_end_matches('/').to_string()
 }
 
 fn model(
@@ -491,6 +995,7 @@ fn model(
     format: &str,
     size_bytes: u64,
     installed: bool,
+    supports_chat: bool,
 ) -> ProviderModel {
     ProviderModel {
         id: id.to_string(),
@@ -498,7 +1003,7 @@ fn model(
         format: format.to_string(),
         size_bytes,
         installed,
-        supports_chat: true,
+        supports_chat,
     }
 }
 
@@ -514,85 +1019,127 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seeded_manager_exposes_mock_provider_capabilities() {
+    fn seeded_manager_exposes_real_local_provider_adapters() {
         let mut manager = ProviderManager::seeded();
         let statuses = manager.statuses();
 
-        assert_eq!(statuses.len(), 4);
-        assert!(statuses.iter().all(|status| status
-            .definition
-            .capabilities
-            .contains(&ProviderCapability::PauseResumeTasks)));
+        assert_eq!(statuses.len(), 5);
+        assert!(statuses
+            .iter()
+            .any(|status| status.definition.kind == ProviderKind::Ollama));
+        assert!(statuses
+            .iter()
+            .any(|status| status.definition.kind == ProviderKind::LmStudio));
+        assert!(statuses
+            .iter()
+            .any(|status| status.definition.kind == ProviderKind::OpenAiCompatible));
         assert!(statuses
             .iter()
             .any(|status| status.definition.kind == ProviderKind::MlxLm));
         assert!(statuses
             .iter()
-            .any(|status| status.definition.kind == ProviderKind::Ollama));
+            .any(|status| status.definition.kind == ProviderKind::LlamaCpp));
     }
 
     #[test]
-    fn mock_provider_lists_models_and_completes_chat() {
-        let mut manager = ProviderManager::seeded();
-        let models = manager
-            .list_models("mock-ollama")
-            .expect("models should list");
-        let response = manager
-            .chat(ProviderChatRequest {
-                provider_id: "mock-ollama".to_string(),
-                model_id: Some("llama-3-1-8b-q4".to_string()),
-                prompt: "hello local model".to_string(),
-            })
-            .expect("chat should succeed");
+    fn parses_ollama_model_listing() {
+        let models = parse_ollama_models(
+            r#"{"models":[{"name":"llama3.1:8b","size":5368709120,"details":{"family":"llama","quantization_level":"Q4_K_M"}},{"name":"nomic-embed-text","size":629145600}]}"#,
+        )
+        .expect("ollama models parse");
 
-        assert!(models.len() >= 2);
-        assert_eq!(response.model_id, "llama-3-1-8b-q4");
-        assert!(response.response.contains("Mock"));
-        assert!(manager
-            .logs(Some("mock-ollama"))
-            .iter()
-            .any(|entry| entry.message.contains("Mock test chat completed")));
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].format, "llama / Q4_K_M");
+        assert!(!models[1].supports_chat);
     }
 
     #[test]
-    fn pause_blocks_chat_and_resume_allows_it_again() {
+    fn parses_openai_model_listing() {
+        let models = parse_openai_models(
+            r#"{"object":"list","data":[{"id":"local-chat"},{"id":"local-embed"}]}"#,
+        )
+        .expect("openai models parse");
+
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].display_name, "local-chat");
+        assert!(!models[1].supports_chat);
+    }
+
+    #[test]
+    fn parses_openai_chat_response() {
+        let text = parse_openai_chat(
+            r#"{"choices":[{"message":{"role":"assistant","content":"ready"}}]}"#,
+        )
+        .expect("chat response parses");
+
+        assert_eq!(text, "ready");
+    }
+
+    #[test]
+    fn url_parser_preserves_openai_prefix() {
+        let url = parse_http_url("http://127.0.0.1:1234/v1/").expect("url parses");
+
+        assert_eq!(url.host, "127.0.0.1");
+        assert_eq!(url.port, 1234);
+        assert_eq!(join_paths(&url.prefix, "/models"), "/v1/models");
+    }
+
+    #[test]
+    fn pause_blocks_chat_without_touching_network() {
         let mut manager = ProviderManager::seeded();
         let paused = manager
-            .pause("mock-mlx", "test pause")
+            .pause("ollama-local", "test pause")
             .expect("pause succeeds");
         let blocked = manager.chat(ProviderChatRequest {
-            provider_id: "mock-mlx".to_string(),
-            model_id: None,
+            provider_id: "ollama-local".to_string(),
+            model_id: Some("llama3.1:8b".to_string()),
             prompt: "blocked".to_string(),
         });
-        let resumed = manager.resume("mock-mlx").expect("resume succeeds");
-        let response = manager
-            .chat(ProviderChatRequest {
-                provider_id: "mock-mlx".to_string(),
-                model_id: None,
-                prompt: "resume works".to_string(),
-            })
-            .expect("chat works after resume");
 
         assert_eq!(paused.health, ProviderHealth::Paused);
         assert!(blocked.expect_err("paused chat fails").contains("paused"));
-        assert_eq!(resumed.health, ProviderHealth::Healthy);
-        assert!(response.response.contains("resume works"));
     }
 
     #[test]
-    fn stop_blocks_chat_and_start_restores_health() {
+    fn settings_update_changes_base_url_and_enabled_state() {
         let mut manager = ProviderManager::seeded();
-        let stopped = manager.stop("mock-ollama").expect("stop succeeds");
-        let blocked = manager.chat(ProviderChatRequest {
-            provider_id: "mock-ollama".to_string(),
-            model_id: None,
-            prompt: "blocked".to_string(),
-        });
-        let started = manager.start("mock-ollama").expect("start succeeds");
+        let status = manager
+            .update_settings(ProviderSettingsPatch {
+                provider_id: "lm-studio-local".to_string(),
+                enabled: false,
+                base_url: "http://127.0.0.1:9999/v1/".to_string(),
+                folder: "/tmp/lm-studio".to_string(),
+                launch_command: Some("lm-studio --server".to_string()),
+            })
+            .expect("settings update succeeds");
+        let settings = manager
+            .settings("lm-studio-local")
+            .expect("settings should load");
 
-        assert_eq!(stopped.health, ProviderHealth::Stopped);
-        assert!(blocked.expect_err("stopped chat fails").contains("stopped"));
-        assert_eq!(started.health, ProviderHealth::Healthy);
+        assert_eq!(status.health, ProviderHealth::Stopped);
+        assert_eq!(settings.base_url, "http://127.0.0.1:9999/v1");
+        assert_eq!(settings.folder, "/tmp/lm-studio");
+        assert_eq!(
+            settings.launch_command.as_deref(),
+            Some("lm-studio --server")
+        );
+    }
+
+    #[test]
+    fn install_plan_is_dry_run_only() {
+        let manager = ProviderManager::seeded();
+        let plan = manager
+            .install_plan("mlx-lm-local")
+            .expect("plan should be available");
+
+        assert!(plan.dry_run);
+        assert!(plan
+            .commands
+            .iter()
+            .any(|command| command.contains("mlx-lm")));
+        assert!(plan
+            .notes
+            .iter()
+            .any(|note| note.contains("no commands are executed")));
     }
 }

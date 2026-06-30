@@ -16,8 +16,8 @@ use model_catalog::{
     ScoreModelCatalogRequest,
 };
 use provider_core::{
-    ProviderChatRequest, ProviderChatResponse, ProviderLogEntry, ProviderManager, ProviderModel,
-    ProviderStatus,
+    ProviderChatRequest, ProviderChatResponse, ProviderInstallPlan, ProviderLogEntry,
+    ProviderManager, ProviderModel, ProviderSettings, ProviderSettingsPatch, ProviderStatus,
 };
 use std::sync::Mutex;
 use tauri::{
@@ -210,7 +210,7 @@ fn list_provider_models(
     provider_state: State<'_, SharedProviderState>,
     provider_id: String,
 ) -> Result<Vec<ProviderModel>, String> {
-    let providers = provider_state
+    let mut providers = provider_state
         .lock()
         .map_err(|_| "provider state lock poisoned".to_string())?;
     providers.list_models(&provider_id)
@@ -253,6 +253,42 @@ fn get_provider_folder(
     providers.folder(&provider_id)
 }
 
+#[tauri::command]
+fn get_provider_settings(
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+) -> Result<ProviderSettings, String> {
+    let providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    providers.settings(&provider_id)
+}
+
+#[tauri::command]
+fn update_provider_settings(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    patch: ProviderSettingsPatch,
+) -> Result<ProviderStatus, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let status = providers.update_settings(patch)?;
+    emit_provider_status(&app, &status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn preview_provider_install_plan(
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+) -> Result<ProviderInstallPlan, String> {
+    let providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    providers.install_plan(&provider_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -288,7 +324,10 @@ pub fn run() {
             list_provider_models,
             send_provider_test_chat,
             get_provider_logs,
-            get_provider_folder
+            get_provider_folder,
+            get_provider_settings,
+            update_provider_settings,
+            preview_provider_install_plan
         ])
         .run(tauri::generate_context!())
         .expect("error while running Local AI Router desktop shell");
