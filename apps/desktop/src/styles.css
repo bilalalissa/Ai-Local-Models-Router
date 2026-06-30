@@ -1484,6 +1484,42 @@ button:disabled {
   margin-top: 12px;
 }
 
+.remote-device-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.remote-device-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfe;
+}
+
+.remote-device-card.paired {
+  gap: 12px;
+}
+
+.remote-device-card div:not(.state-summary):not(.remote-broker-actions):not(.reason-list):not(.remote-device-card-heading) {
+  display: grid;
+  gap: 4px;
+}
+
+.remote-device-card span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.remote-device-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
 .pairing-code-box,
 .token-box {
   display: grid;
@@ -1890,6 +1926,7 @@ button:disabled {
   .provider-card-grid,
   .provider-detail-grid,
   .remote-broker-grid,
+  .remote-device-grid,
   .installer-grid,
   .updates-grid,
   .update-card-grid {
@@ -2002,6 +2039,7 @@ button:disabled {
   .provider-card-grid,
   .provider-detail-grid,
   .remote-broker-grid,
+  .remote-device-grid,
   .settings-grid,
   .background-settings-grid,
   .updates-grid,

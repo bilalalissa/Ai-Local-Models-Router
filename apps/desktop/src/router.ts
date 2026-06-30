@@ -19,6 +19,7 @@ export type RouterThresholds = {
 export type RouterDecisionRequest = {
   hardware: HardwareSpecs;
   provider_statuses: ProviderStatus[];
+  remote_candidates: RouteCandidate[];
   mode: RouterMode;
   use_case: UseCase;
   preference_tags: PreferenceTag[];
@@ -108,17 +109,6 @@ export async function runRouterTestPrompt(request: RouterTestRequest): Promise<R
 
 async function fallbackDecision(request: RouterDecisionRequest): Promise<RouterDecision> {
   const suspended = request.app_paused || request.mode === "Paused";
-  if (request.mode === "RemoteOnly") {
-    return {
-      mode: request.mode,
-      selected: null,
-      fallback_chain: [],
-      rejected: [],
-      reasons: ["Remote only is unavailable until the remote broker/client stages."],
-      suspended,
-      can_execute: false
-    };
-  }
   const scored = await scoreModels({
     hardware: request.hardware,
     use_case: request.use_case,
@@ -127,7 +117,7 @@ async function fallbackDecision(request: RouterDecisionRequest): Promise<RouterD
     installed_only: request.installed_only,
     app_paused: suspended
   });
-  const candidates = scored.flatMap((result) =>
+  const localCandidates = scored.flatMap((result) =>
     result.model.providers.flatMap((providerKind) => {
       const provider = request.provider_statuses.find((status) =>
         status.definition.kind === providerKind &&
@@ -151,26 +141,32 @@ async function fallbackDecision(request: RouterDecisionRequest): Promise<RouterD
       } satisfies RouteCandidate];
     })
   ).sort((a, b) => b.score - a.score || (a.latency_ms ?? 999999) - (b.latency_ms ?? 999999));
-  const rejected = candidates.filter((candidate) =>
+  const remoteCandidates = [...request.remote_candidates].sort((a, b) => b.score - a.score || (a.latency_ms ?? 999999) - (b.latency_ms ?? 999999));
+  const localOverloaded =
+    request.hardware.load.cpu_percent > request.thresholds.max_cpu_percent ||
+    request.hardware.load.memory_percent > request.thresholds.max_memory_percent ||
+    (request.hardware.load.gpu_percent ?? 0) > request.thresholds.max_gpu_percent;
+  const pool = candidatePool(request, localCandidates, remoteCandidates, localOverloaded);
+  const rejected = [...localCandidates, ...remoteCandidates].filter((candidate) =>
     candidate.score < request.thresholds.min_score ||
     candidate.label === "Avoid" ||
     candidate.blockers.length > 0 ||
     (candidate.latency_ms ?? 0) > request.thresholds.max_latency_ms
   );
-  const eligible = candidates.filter((candidate) => !rejected.includes(candidate));
-  const selected = selectCandidate(request, eligible, candidates);
+  const eligible = pool.filter((candidate) => !rejected.includes(candidate));
+  const selected = selectCandidate(request, eligible, [...localCandidates, ...remoteCandidates]);
   const reasons = [
     ...(suspended ? ["Router is paused; no executable routing change will be made."] : []),
     ...(request.mode === "RemotePreferred"
-      ? [
-          "Remote preferred is a Stage 8 placeholder until remote broker stages.",
-          "Falling back to local candidates because no remote broker is available."
-        ]
+      ? [remoteCandidates.length ? "Remote preferred is using paired remote candidates first." : "Remote preferred has no available remote candidates; local fallback is allowed."]
       : []),
+    ...(request.mode === "RemoteOnly" && remoteCandidates.length === 0 ? ["Remote only has no available remote candidates from paired devices."] : []),
+    ...(request.mode === "Auto" && localOverloaded && remoteCandidates.length ? ["Local load exceeds routing thresholds; Auto mode prefers remote fallback."] : []),
     ...(request.mode === "LocalOnly" ? ["Local only mode excludes remote candidates."] : []),
+    ...(remoteCandidates.length ? [`${remoteCandidates.length} remote model candidates are available from paired Windows broker devices.`] : []),
     selected
       ? `Selected ${selected.model_name} on ${selected.provider_name} with score ${selected.score}.`
-      : "No executable local candidate met routing thresholds."
+      : "No executable candidate met routing thresholds."
   ];
   return {
     mode: request.mode,
@@ -179,8 +175,23 @@ async function fallbackDecision(request: RouterDecisionRequest): Promise<RouterD
     rejected,
     reasons,
     suspended,
-    can_execute: !!selected && !suspended && request.mode !== "RemotePreferred"
+    can_execute: !!selected && !suspended
   };
+}
+
+function candidatePool(
+  request: RouterDecisionRequest,
+  localCandidates: RouteCandidate[],
+  remoteCandidates: RouteCandidate[],
+  localOverloaded: boolean
+): RouteCandidate[] {
+  if (request.mode === "LocalOnly") return localCandidates;
+  if (request.mode === "RemoteOnly") return remoteCandidates;
+  if (request.mode === "RemotePreferred") return [...remoteCandidates, ...localCandidates];
+  if (request.mode === "Auto" && (localOverloaded || localCandidates.length === 0) && remoteCandidates.length) {
+    return [...remoteCandidates, ...localCandidates];
+  }
+  return [...localCandidates, ...remoteCandidates];
 }
 
 function selectCandidate(

@@ -119,6 +119,20 @@ import {
   runRouterTestPrompt
 } from "./router";
 import {
+  type RemoteClientDevice,
+  type RemoteClientSettings,
+  type RemoteClientSnapshot,
+  discoverRemoteClients,
+  getRemoteClientSnapshot,
+  getRemoteRouteCandidates,
+  pairDiscoveredRemoteClient,
+  pairManualRemoteClient,
+  refreshRemoteClients,
+  removeRemoteClient,
+  subscribeRemoteClientSnapshot,
+  updateRemoteClientSettings
+} from "./remoteClient";
+import {
   type BrokerEndpointRequest,
   type BrokerPausePolicy,
   type RemoteBrokerSettings,
@@ -432,7 +446,7 @@ function Sidebar({
       <div className="sidebar-footer">
         <div className="status-dot-row">
           <span className="dot green" />
-          <span>Stage 11 broker</span>
+          <span>Stage 12 remote client</span>
         </div>
         <span className="version">v0.1.0</span>
       </div>
@@ -1710,7 +1724,8 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
 
 function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
   const [snapshot, setSnapshot] = useState<RemoteBrokerSnapshot | null>(null);
-  const [statusMessage, setStatusMessage] = useState("Loading Windows broker controls...");
+  const [clientSnapshot, setClientSnapshot] = useState<RemoteClientSnapshot | null>(null);
+  const [statusMessage, setStatusMessage] = useState("Loading remote PC controls...");
   const [error, setError] = useState<string | null>(null);
   const [clientName, setClientName] = useState("MacBook client");
   const [clientAddress, setClientAddress] = useState("192.168.1.40");
@@ -1719,28 +1734,38 @@ function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
   const [previewToken, setPreviewToken] = useState("");
   const [previewEndpoint, setPreviewEndpoint] = useState("/api/health");
   const [previewResponse, setPreviewResponse] = useState<unknown>(null);
+  const [manualRemoteName, setManualRemoteName] = useState("Studio-Win11 Broker");
+  const [manualRemoteUrl, setManualRemoteUrl] = useState("fixture://studio-win11");
+  const [manualRemoteToken, setManualRemoteToken] = useState("lar_stage12_fixture_token");
+  const [discoveredToken, setDiscoveredToken] = useState("lar_stage12_fixture_token");
   const isPaused = appState.lifecycle_state === "Paused";
 
   useEffect(() => {
     let ignore = false;
-    const unsubscribe = subscribeRemoteBrokerSnapshot((nextSnapshot) => {
+    const unsubscribeBroker = subscribeRemoteBrokerSnapshot((nextSnapshot) => {
       setSnapshot(nextSnapshot);
       setStatusMessage(nextSnapshot.message);
     });
-    getRemoteBrokerSnapshot()
-      .then((nextSnapshot) => {
+    const unsubscribeClient = subscribeRemoteClientSnapshot((nextSnapshot) => {
+      setClientSnapshot(nextSnapshot);
+      setStatusMessage(nextSnapshot.message);
+    });
+    Promise.all([getRemoteBrokerSnapshot(), getRemoteClientSnapshot()])
+      .then(([nextSnapshot, nextClientSnapshot]) => {
         if (ignore) return;
         setSnapshot(nextSnapshot);
-        setStatusMessage(nextSnapshot.message);
+        setClientSnapshot(nextClientSnapshot);
+        setStatusMessage(nextClientSnapshot.message);
       })
       .catch((err) => {
         if (ignore) return;
         setError(errorMessage(err));
-        setStatusMessage("Windows broker controls failed to load.");
+        setStatusMessage("Remote PC controls failed to load.");
       });
     return () => {
       ignore = true;
-      unsubscribe();
+      unsubscribeBroker();
+      unsubscribeClient();
     };
   }, []);
 
@@ -1762,6 +1787,85 @@ function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
     },
     [snapshot]
   );
+
+  const updateClientSetting = useCallback(
+    async (key: keyof RemoteClientSettings, value: boolean | string) => {
+      if (!clientSnapshot) return;
+      setError(null);
+      try {
+        const nextSnapshot = await updateRemoteClientSettings({
+          ...clientSnapshot.settings,
+          [key]: value
+        });
+        setClientSnapshot(nextSnapshot);
+        setStatusMessage(nextSnapshot.message);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Remote client settings failed to save.");
+      }
+    },
+    [clientSnapshot]
+  );
+
+  const runClientAction = useCallback(
+    async (action: "discover" | "refresh") => {
+      setError(null);
+      try {
+        const nextSnapshot = action === "discover" ? await discoverRemoteClients() : await refreshRemoteClients();
+        setClientSnapshot(nextSnapshot);
+        setStatusMessage(nextSnapshot.message);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Remote client action failed.");
+      }
+    },
+    []
+  );
+
+  const pairManualRemote = useCallback(async () => {
+    setError(null);
+    try {
+      const nextSnapshot = await pairManualRemoteClient({
+        name: manualRemoteName.trim() || "Remote Windows broker",
+        base_url: manualRemoteUrl.trim(),
+        token: manualRemoteToken.trim()
+      });
+      setClientSnapshot(nextSnapshot);
+      setStatusMessage(nextSnapshot.message);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Manual remote pairing failed.");
+    }
+  }, [manualRemoteName, manualRemoteToken, manualRemoteUrl]);
+
+  const pairFirstDiscovery = useCallback(async () => {
+    const discovery = clientSnapshot?.discovered[0];
+    if (!discovery) return;
+    setError(null);
+    try {
+      const nextSnapshot = await pairDiscoveredRemoteClient({
+        discovery_id: discovery.id,
+        token: discoveredToken.trim()
+      });
+      setClientSnapshot(nextSnapshot);
+      setStatusMessage(nextSnapshot.message);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Discovered remote pairing failed.");
+    }
+  }, [clientSnapshot?.discovered, discoveredToken]);
+
+  const removeRemote = useCallback(async (device: RemoteClientDevice) => {
+    setError(null);
+    try {
+      const nextSnapshot = await removeRemoteClient(device.id);
+      setClientSnapshot(nextSnapshot);
+      setStatusMessage(`${device.name} removed.`);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Remote client remove failed.");
+    }
+  }, []);
 
   const runBrokerAction = useCallback(
     async (action: "start" | "stop" | "pair") => {
@@ -1845,14 +1949,14 @@ function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
     }
   }, [previewEndpoint, previewToken, snapshot?.endpoints]);
 
-  if (!snapshot) {
+  if (!snapshot || !clientSnapshot) {
     return (
       <div className="remote-broker-page">
-        <Panel title="Windows Remote Provider Broker">
+        <Panel title="Remote PCs">
           <div className="loading-state">
             <Network size={22} />
             <strong>{statusMessage}</strong>
-            {error ? <span>{error}</span> : <span>Preparing broker state.</span>}
+            {error ? <span>{error}</span> : <span>Preparing broker and remote client state.</span>}
           </div>
         </Panel>
       </div>
@@ -1862,9 +1966,154 @@ function RemoteBrokerPage({ appState }: { appState: AppStateSnapshot }) {
   const running = snapshot.status === "Running" || snapshot.status === "PausedOnline";
   const activeSession = snapshot.pairing_sessions.find((session) => session.status === "Active");
   const liveEndpoint = snapshot.endpoints.find((endpoint) => endpoint.path === previewEndpoint);
+  const firstDiscovery = clientSnapshot.discovered[0];
 
   return (
     <div className="remote-broker-page">
+      <Panel title="Mac Remote Client">
+        <div className="remote-broker-toolbar">
+          <div className="hardware-title">
+            <Monitor size={24} />
+            <div>
+              <strong>{remoteClientStatusLabel(clientSnapshot.status)}</strong>
+              <span>{statusMessage}</span>
+            </div>
+          </div>
+          <button className="secondary-button" disabled={isPaused} onClick={() => runClientAction("discover")} type="button">
+            <Network size={16} />
+            Discover
+          </button>
+          <button className="secondary-button" disabled={isPaused} onClick={() => runClientAction("refresh")} type="button">
+            <RefreshCw size={16} />
+            Refresh remotes
+          </button>
+        </div>
+        {error ? <div className="inline-error">{error}</div> : null}
+      </Panel>
+
+      <div className="remote-broker-grid">
+        <Panel title="Client Discovery">
+          <div className="settings-list">
+            <SettingToggle
+              checked={clientSnapshot.settings.discovery_enabled}
+              description="Use Bonjour/mDNS service lookup for Windows brokers."
+              label="Bonjour discovery"
+              onChange={(checked) => updateClientSetting("discovery_enabled", checked)}
+            />
+            <SettingToggle
+              checked={clientSnapshot.settings.include_fixture_discovery}
+              description="Keep the fixture broker available for local testing and browser preview."
+              label="Fixture broker"
+              onChange={(checked) => updateClientSetting("include_fixture_discovery", checked)}
+            />
+            <SettingToggle
+              checked={clientSnapshot.settings.allow_router_remote_models}
+              description="Allow Router modes to select paired Windows remote models."
+              label="Router can use remotes"
+              onChange={(checked) => updateClientSetting("allow_router_remote_models", checked)}
+            />
+          </div>
+          <div className="broker-form-grid single">
+            <label>
+              <span>mDNS service</span>
+              <input
+                value={clientSnapshot.settings.mdns_service}
+                onChange={(event) => updateClientSetting("mdns_service", event.target.value)}
+              />
+            </label>
+          </div>
+        </Panel>
+
+        <Panel title="Manual Pairing">
+          <div className="broker-form-grid single">
+            <label>
+              <span>Remote name</span>
+              <input value={manualRemoteName} onChange={(event) => setManualRemoteName(event.target.value)} />
+            </label>
+            <label>
+              <span>Broker URL</span>
+              <input value={manualRemoteUrl} onChange={(event) => setManualRemoteUrl(event.target.value)} />
+            </label>
+            <label>
+              <span>Pairing token</span>
+              <input value={manualRemoteToken} onChange={(event) => setManualRemoteToken(event.target.value)} />
+            </label>
+          </div>
+          <div className="remote-broker-actions">
+            <button className="secondary-button" disabled={isPaused} onClick={pairManualRemote} type="button">
+              <ShieldCheck size={16} />
+              Pair manual broker
+            </button>
+          </div>
+        </Panel>
+      </div>
+
+      <div className="remote-broker-grid">
+        <Panel title="Discovered Brokers">
+          {clientSnapshot.discovered.length === 0 ? (
+            <div className="empty-log-state compact">
+              <Network size={20} />
+              <strong>No brokers discovered.</strong>
+              <span>Run Discover to query {clientSnapshot.settings.mdns_service} and fixture sources.</span>
+            </div>
+          ) : (
+            <div className="remote-device-grid">
+              {clientSnapshot.discovered.map((device) => (
+                <article className="remote-device-card" key={device.id}>
+                  <div>
+                    <strong>{device.name}</strong>
+                    <span>{device.source} / {device.service_type}</span>
+                  </div>
+                  <span>{device.base_url}</span>
+                  <span>{device.latency_ms ? `${device.latency_ms} ms` : "Latency pending"}</span>
+                </article>
+              ))}
+            </div>
+          )}
+          <div className="broker-form-grid single">
+            <label>
+              <span>Token for first discovered broker</span>
+              <input value={discoveredToken} onChange={(event) => setDiscoveredToken(event.target.value)} />
+            </label>
+          </div>
+          <div className="remote-broker-actions">
+            <button className="secondary-button" disabled={!firstDiscovery || isPaused} onClick={pairFirstDiscovery} type="button">
+              <ShieldCheck size={16} />
+              Pair first discovery
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="Remote Routing Summary">
+          <div className="state-summary">
+            <StatusLine label="Paired devices" value={String(clientSnapshot.paired_devices.length)} />
+            <StatusLine label="Route candidates" value={String(clientSnapshot.route_candidates.length)} />
+            <StatusLine label="Token storage" value={clientSnapshot.token_storage} />
+            <StatusLine
+              label="Last discovery"
+              value={clientSnapshot.last_discovery_ms ? formatTimestamp(clientSnapshot.last_discovery_ms) : "Not run"}
+            />
+            <StatusLine label="Pause gate" value={isPaused ? "Discovery suspended" : "Open"} />
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Paired Remote Devices">
+        {clientSnapshot.paired_devices.length === 0 ? (
+          <div className="empty-log-state">
+            <Monitor size={22} />
+            <strong>No remote devices paired.</strong>
+            <span>Use Bonjour discovery or manual IP:port pairing to connect a Windows broker.</span>
+          </div>
+        ) : (
+          <div className="remote-device-grid">
+            {clientSnapshot.paired_devices.map((device) => (
+              <RemoteDeviceCard device={device} key={device.id} onRemove={removeRemote} />
+            ))}
+          </div>
+        )}
+      </Panel>
+
       <Panel title="Windows Remote Provider Broker">
         <div className="remote-broker-toolbar">
           <div className="hardware-title">
@@ -2147,6 +2396,46 @@ function RemoteClientRow({
         </button>
       </td>
     </tr>
+  );
+}
+
+function RemoteDeviceCard({
+  device,
+  onRemove
+}: {
+  device: RemoteClientDevice;
+  onRemove: (device: RemoteClientDevice) => void;
+}) {
+  const gpu = device.specs?.gpus[0];
+  return (
+    <article className="remote-device-card paired">
+      <div className="remote-device-card-heading">
+        <div>
+          <strong>{device.name}</strong>
+          <span>{device.base_url}</span>
+        </div>
+        <span className={`health-pill ${remoteClientHealthClass(device.status)}`}>{remoteClientStatusLabel(device.status)}</span>
+      </div>
+      <div className="state-summary">
+        <StatusLine label="Platform" value={device.specs?.platform.os ?? "Unknown"} />
+        <StatusLine label="GPU" value={gpu ? `${gpu.name} (${gpu.vendor})` : "Unknown"} />
+        <StatusLine label="Memory" value={device.specs ? formatBytesGb(device.specs.memory.total_bytes) : "Unknown"} />
+        <StatusLine label="Load" value={device.specs ? `${device.specs.load.memory_percent}% memory` : "Pending"} />
+        <StatusLine label="Latency" value={device.latency_ms ? `${device.latency_ms} ms` : "Pending"} />
+        <StatusLine label="Models" value={String(device.models.length)} />
+      </div>
+      <div className="reason-list">
+        {device.models.slice(0, 4).map((model) => (
+          <span key={model.id}>{model.display_name}</span>
+        ))}
+        <strong>{device.message}</strong>
+      </div>
+      <div className="remote-broker-actions">
+        <button className="secondary-button" onClick={() => onRemove(device)} type="button">
+          Remove
+        </button>
+      </div>
+    </article>
   );
 }
 
@@ -2730,6 +3019,7 @@ function RouterShell({
   const [hardware, setHardware] = useState<HardwareSpecs | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [models, setModels] = useState<Array<{ id: string; display_name: string }>>([]);
+  const [remoteCandidates, setRemoteCandidates] = useState<RouteCandidate[]>([]);
   const [mode, setMode] = useState<RouterMode>("Auto");
   const [useCase, setUseCase] = useState<UseCase>("GeneralChat");
   const [manualModelId, setManualModelId] = useState("phi-3-5-mini-q4");
@@ -2745,12 +3035,20 @@ function RouterShell({
 
   useEffect(() => {
     let ignore = false;
-    Promise.all([refreshHardwareSpecs(), refreshProviderHealth(), getModelCatalog()])
-      .then(([nextHardware, nextProviders, nextModels]) => {
+    const unsubscribe = subscribeRemoteClientSnapshot((snapshot) => {
+      setRemoteCandidates(snapshot.route_candidates);
+      setModels((current) => mergeModelOptions(current, snapshot.route_candidates));
+    });
+    Promise.all([refreshHardwareSpecs(), refreshProviderHealth(), getModelCatalog(), getRemoteRouteCandidates()])
+      .then(([nextHardware, nextProviders, nextModels, nextRemoteCandidates]) => {
         if (ignore) return;
         setHardware(nextHardware);
         setProviders(nextProviders);
-        setModels(nextModels.map((model) => ({ id: model.id, display_name: model.display_name })));
+        setRemoteCandidates(nextRemoteCandidates);
+        setModels(mergeModelOptions(
+          nextModels.map((model) => ({ id: model.id, display_name: model.display_name })),
+          nextRemoteCandidates
+        ));
         setStatusMessage("Router inputs loaded.");
       })
       .catch((err) => {
@@ -2761,6 +3059,7 @@ function RouterShell({
 
     return () => {
       ignore = true;
+      unsubscribe();
     };
   }, []);
 
@@ -2770,6 +3069,7 @@ function RouterShell({
     decideRouterRoute({
       hardware,
       provider_statuses: providers,
+      remote_candidates: remoteCandidates,
       mode: isPaused ? "Paused" : mode,
       use_case: useCase,
       preference_tags: ["Balanced"],
@@ -2793,7 +3093,7 @@ function RouterShell({
     return () => {
       ignore = true;
     };
-  }, [forcedModelId, hardware, installedOnly, isPaused, manualModelId, mode, providers, thresholds, useCase]);
+  }, [forcedModelId, hardware, installedOnly, isPaused, manualModelId, mode, providers, remoteCandidates, thresholds, useCase]);
 
   const modeCards: Array<[RouterMode, string, typeof Route]> = [
     ["Auto", "Auto", Route],
@@ -2919,6 +3219,7 @@ function RouterShell({
           <StatusLine label="Mode" value={decision.mode} />
           <StatusLine label="Score" value={selected ? `${selected.score} / ${selected.label}` : "Not available"} />
           <StatusLine label="Executable" value={decision.can_execute ? "Yes" : "No"} />
+          <StatusLine label="Remote candidates" value={String(remoteCandidates.length)} />
           <div className="fallback-list">
             <span>Fallback candidates</span>
             {decision.fallback_chain.length > 0 ? (
@@ -3677,6 +3978,42 @@ function remoteBrokerStatusLabel(status: RemoteBrokerStatus) {
   }
 }
 
+function remoteClientStatusLabel(status: RemoteClientSnapshot["status"] | RemoteClientDevice["status"]) {
+  switch (status) {
+    case "Discovered":
+      return "Discovered";
+    case "Paired":
+      return "Paired";
+    case "Online":
+      return "Online";
+    case "Offline":
+      return "Offline";
+    case "AuthFailed":
+      return "Auth failed";
+    case "Paused":
+      return "Paused";
+    case "Error":
+      return "Error";
+  }
+}
+
+function remoteClientHealthClass(status: RemoteClientDevice["status"]) {
+  switch (status) {
+    case "Online":
+    case "Paired":
+      return "healthy";
+    case "Paused":
+      return "paused";
+    case "Offline":
+      return "stopped";
+    case "AuthFailed":
+    case "Error":
+      return "error";
+    case "Discovered":
+      return "degraded";
+  }
+}
+
 function pausePolicyLabel(policy: BrokerPausePolicy) {
   switch (policy) {
     case "KeepOnline":
@@ -3801,4 +4138,20 @@ function upsertProviderStatus(statuses: ProviderStatus[], nextStatus: ProviderSt
   return statuses.map((status) =>
     status.definition.id === nextStatus.definition.id ? nextStatus : status
   );
+}
+
+function mergeModelOptions(
+  models: Array<{ id: string; display_name: string }>,
+  remoteCandidates: RouteCandidate[]
+): Array<{ id: string; display_name: string }> {
+  const merged = [...models];
+  for (const candidate of remoteCandidates) {
+    if (!merged.some((model) => model.id === candidate.model_id)) {
+      merged.push({
+        id: candidate.model_id,
+        display_name: `${candidate.model_name} (${candidate.provider_name})`
+      });
+    }
+  }
+  return merged;
 }

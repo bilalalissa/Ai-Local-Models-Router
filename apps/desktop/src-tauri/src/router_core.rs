@@ -33,6 +33,8 @@ pub struct RouterThresholds {
 pub struct RouterDecisionRequest {
     pub hardware: HardwareSpecs,
     pub provider_statuses: Vec<ProviderStatus>,
+    #[serde(default)]
+    pub remote_candidates: Vec<RouteCandidate>,
     pub mode: RouterMode,
     pub use_case: UseCase,
     pub preference_tags: Vec<PreferenceTag>,
@@ -101,27 +103,6 @@ pub fn decide_route(request: RouterDecisionRequest) -> Result<RouterDecision, St
     if suspended {
         reasons.push("Router is paused; no executable routing change will be made.".to_string());
     }
-    match request.mode {
-        RouterMode::RemotePreferred => {
-            reasons.push(
-                "Remote preferred is a Stage 8 placeholder until remote broker stages.".to_string(),
-            );
-        }
-        RouterMode::RemoteOnly => {
-            return Ok(RouterDecision {
-                mode: request.mode,
-                selected: None,
-                fallback_chain: Vec::new(),
-                rejected: Vec::new(),
-                reasons: vec![
-                    "Remote only is unavailable until the remote broker/client stages.".to_string(),
-                ],
-                suspended,
-                can_execute: false,
-            });
-        }
-        _ => {}
-    }
 
     let preferred_provider = match request.mode {
         RouterMode::Manual | RouterMode::Forced => None,
@@ -137,31 +118,47 @@ pub fn decide_route(request: RouterDecisionRequest) -> Result<RouterDecision, St
         installed_only: request.installed_only,
         app_paused: suspended,
     })?;
-    let mut candidates = build_candidates(&scored, &request.provider_statuses);
+    let local_candidates = build_candidates(&scored, &request.provider_statuses);
+    let mut remote_candidates = request.remote_candidates.clone();
+    remote_candidates.sort_by(candidate_sort);
+    let local_overloaded = hardware_over_thresholds(&request);
 
     if request.mode == RouterMode::LocalOnly {
         reasons.push("Local only mode excludes remote candidates.".to_string());
     }
-    if request.mode == RouterMode::RemotePreferred {
+    if !remote_candidates.is_empty() {
+        reasons.push(format!(
+            "{} remote model candidates are available from paired Windows broker devices.",
+            remote_candidates.len()
+        ));
+    }
+    if request.mode == RouterMode::RemotePreferred && remote_candidates.is_empty() {
         reasons.push(
-            "Falling back to local candidates because no remote broker is available.".to_string(),
+            "Remote preferred has no available remote candidates; local fallback is allowed."
+                .to_string(),
+        );
+    }
+    if request.mode == RouterMode::RemoteOnly && remote_candidates.is_empty() {
+        reasons.push(
+            "Remote only has no available remote candidates from paired devices.".to_string(),
+        );
+    }
+    if matches!(request.mode, RouterMode::Auto) && local_overloaded && !remote_candidates.is_empty()
+    {
+        reasons.push(
+            "Local load exceeds routing thresholds; Auto mode prefers remote fallback.".to_string(),
         );
     }
 
     let mut rejected = Vec::new();
-    candidates.retain(|candidate| {
-        let keep = candidate.score >= request.thresholds.min_score
-            && !matches!(candidate.label, CompatibilityLabel::Avoid)
-            && candidate
-                .latency_ms
-                .map(|latency| latency <= request.thresholds.max_latency_ms)
-                .unwrap_or(true)
-            && candidate.blockers.is_empty();
-        if !keep {
-            rejected.push(candidate.clone());
-        }
-        keep
-    });
+    let local_eligible = filter_eligible(&local_candidates, &request.thresholds, &mut rejected);
+    let remote_eligible = filter_eligible(&remote_candidates, &request.thresholds, &mut rejected);
+    let candidates = candidate_pool(
+        &request,
+        &local_eligible,
+        &remote_eligible,
+        local_overloaded,
+    );
 
     apply_load_thresholds(&request, &mut reasons);
 
@@ -173,7 +170,8 @@ pub fn decide_route(request: RouterDecisionRequest) -> Result<RouterDecision, St
                 &scored,
                 &request.provider_statuses,
                 request.forced_model_id.as_deref(),
-            );
+            )
+            .or_else(|| select_by_model(&remote_candidates, request.forced_model_id.as_deref()));
             if forced.is_none() {
                 reasons.push(
                     "Forced model is unavailable; no automatic fallback selected.".to_string(),
@@ -182,6 +180,8 @@ pub fn decide_route(request: RouterDecisionRequest) -> Result<RouterDecision, St
             forced
         }
         RouterMode::Paused => None,
+        RouterMode::RemoteOnly => remote_eligible.first().cloned(),
+        RouterMode::RemotePreferred => candidates.first().cloned(),
         _ => candidates.first().cloned(),
     };
 
@@ -198,8 +198,8 @@ pub fn decide_route(request: RouterDecisionRequest) -> Result<RouterDecision, St
         {
             reasons.push("Candidate clears upgrade margin.".to_string());
         }
-    } else if !suspended && request.mode != RouterMode::RemoteOnly {
-        reasons.push("No executable local candidate met routing thresholds.".to_string());
+    } else if !suspended {
+        reasons.push("No executable candidate met routing thresholds.".to_string());
     }
 
     let fallback_chain = candidates
@@ -215,8 +215,7 @@ pub fn decide_route(request: RouterDecisionRequest) -> Result<RouterDecision, St
         })
         .take(5)
         .collect::<Vec<_>>();
-    let can_execute =
-        selected.is_some() && !suspended && request.mode != RouterMode::RemotePreferred;
+    let can_execute = selected.is_some() && !suspended;
 
     Ok(RouterDecision {
         mode: request.mode,
@@ -227,6 +226,18 @@ pub fn decide_route(request: RouterDecisionRequest) -> Result<RouterDecision, St
         suspended,
         can_execute,
     })
+}
+
+fn candidate_sort(a: &RouteCandidate, b: &RouteCandidate) -> std::cmp::Ordering {
+    b.score
+        .cmp(&a.score)
+        .then_with(|| candidate_health_rank(a).cmp(&candidate_health_rank(b)))
+        .then_with(|| {
+            a.latency_ms
+                .unwrap_or(u32::MAX)
+                .cmp(&b.latency_ms.unwrap_or(u32::MAX))
+        })
+        .then_with(|| a.model_name.cmp(&b.model_name))
 }
 
 pub fn run_router_test(
@@ -289,17 +300,60 @@ fn build_candidates(
             }
         }
     }
-    candidates.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
-            .then_with(|| candidate_health_rank(a).cmp(&candidate_health_rank(b)))
-            .then_with(|| {
-                a.latency_ms
-                    .unwrap_or(u32::MAX)
-                    .cmp(&b.latency_ms.unwrap_or(u32::MAX))
-            })
-            .then_with(|| a.model_name.cmp(&b.model_name))
-    });
+    candidates.sort_by(candidate_sort);
+    candidates
+}
+
+fn filter_eligible(
+    candidates: &[RouteCandidate],
+    thresholds: &RouterThresholds,
+    rejected: &mut Vec<RouteCandidate>,
+) -> Vec<RouteCandidate> {
+    candidates
+        .iter()
+        .filter_map(|candidate| {
+            let keep = candidate.score >= thresholds.min_score
+                && !matches!(candidate.label, CompatibilityLabel::Avoid)
+                && candidate
+                    .latency_ms
+                    .map(|latency| latency <= thresholds.max_latency_ms)
+                    .unwrap_or(true)
+                && candidate.blockers.is_empty();
+            if keep {
+                Some(candidate.clone())
+            } else {
+                rejected.push(candidate.clone());
+                None
+            }
+        })
+        .collect()
+}
+
+fn candidate_pool(
+    request: &RouterDecisionRequest,
+    local_eligible: &[RouteCandidate],
+    remote_eligible: &[RouteCandidate],
+    local_overloaded: bool,
+) -> Vec<RouteCandidate> {
+    let mut candidates = Vec::new();
+    match request.mode {
+        RouterMode::LocalOnly => candidates.extend_from_slice(local_eligible),
+        RouterMode::RemoteOnly => candidates.extend_from_slice(remote_eligible),
+        RouterMode::RemotePreferred => {
+            candidates.extend_from_slice(remote_eligible);
+            candidates.extend_from_slice(local_eligible);
+        }
+        RouterMode::Auto
+            if (local_overloaded || local_eligible.is_empty()) && !remote_eligible.is_empty() =>
+        {
+            candidates.extend_from_slice(remote_eligible);
+            candidates.extend_from_slice(local_eligible);
+        }
+        _ => {
+            candidates.extend_from_slice(local_eligible);
+            candidates.extend_from_slice(remote_eligible);
+        }
+    }
     candidates
 }
 
@@ -392,6 +446,17 @@ fn apply_load_thresholds(request: &RouterDecisionRequest, reasons: &mut Vec<Stri
     }
 }
 
+fn hardware_over_thresholds(request: &RouterDecisionRequest) -> bool {
+    request.hardware.load.cpu_percent > f32::from(request.thresholds.max_cpu_percent)
+        || request.hardware.load.memory_percent > f32::from(request.thresholds.max_memory_percent)
+        || request
+            .hardware
+            .load
+            .gpu_percent
+            .map(|load| load > f32::from(request.thresholds.max_gpu_percent))
+            .unwrap_or(false)
+}
+
 fn candidate_health_rank(candidate: &RouteCandidate) -> u8 {
     match candidate.label {
         CompatibilityLabel::Smooth => 0,
@@ -464,6 +529,7 @@ mod tests {
         RouterDecisionRequest {
             hardware: load_fixture("apple-silicon-m3-pro-18gb").expect("fixture"),
             provider_statuses: providers(),
+            remote_candidates: Vec::new(),
             mode,
             use_case: UseCase::Coding,
             preference_tags: vec![PreferenceTag::Balanced],
@@ -517,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_only_is_placeholder_without_execution() {
+    fn remote_only_requires_paired_remote_candidates() {
         let decision = decide_route(request(RouterMode::RemoteOnly)).expect("decision");
 
         assert!(decision.selected.is_none());
@@ -525,7 +591,51 @@ mod tests {
         assert!(decision
             .reasons
             .iter()
-            .any(|reason| reason.contains("remote broker")));
+            .any(|reason| reason.contains("no available remote candidates")));
+    }
+
+    #[test]
+    fn remote_only_selects_paired_remote_candidate() {
+        let mut request = request(RouterMode::RemoteOnly);
+        request.remote_candidates = vec![remote_candidate("remote-qwen", 89, 95)];
+        let decision = decide_route(request).expect("decision");
+
+        assert_eq!(
+            decision
+                .selected
+                .as_ref()
+                .map(|candidate| candidate.provider_id.as_str()),
+            Some("remote-client:studio-win11")
+        );
+        assert!(decision.can_execute);
+    }
+
+    #[test]
+    fn remote_preferred_uses_remote_before_local() {
+        let mut request = request(RouterMode::RemotePreferred);
+        request.remote_candidates = vec![remote_candidate("remote-qwen", 84, 110)];
+        let decision = decide_route(request).expect("decision");
+
+        assert!(decision
+            .selected
+            .as_ref()
+            .map(|candidate| candidate.provider_id.starts_with("remote-client:"))
+            .unwrap_or(false));
+        assert!(decision.can_execute);
+    }
+
+    #[test]
+    fn auto_uses_remote_when_local_machine_is_overloaded() {
+        let mut request = request(RouterMode::Auto);
+        request.hardware.load.memory_percent = 96.0;
+        request.remote_candidates = vec![remote_candidate("remote-qwen", 86, 120)];
+        let decision = decide_route(request).expect("decision");
+
+        assert!(decision
+            .selected
+            .as_ref()
+            .map(|candidate| candidate.provider_id.starts_with("remote-client:"))
+            .unwrap_or(false));
     }
 
     #[test]
@@ -540,7 +650,7 @@ mod tests {
         assert!(decision
             .reasons
             .iter()
-            .any(|reason| reason.contains("No executable local candidate")));
+            .any(|reason| reason.contains("No executable candidate")));
     }
 
     #[test]
@@ -606,5 +716,21 @@ mod tests {
                 .map(|response| response.response.as_str()),
             Some("ok")
         );
+    }
+
+    fn remote_candidate(model_id: &str, score: u8, latency_ms: u32) -> RouteCandidate {
+        RouteCandidate {
+            model_id: model_id.to_string(),
+            model_name: "Remote Qwen 14B".to_string(),
+            provider: ProviderKind::OpenAiCompatible,
+            provider_id: "remote-client:studio-win11".to_string(),
+            provider_name: "Remote: Studio Win11".to_string(),
+            score,
+            label: CompatibilityLabel::Good,
+            latency_ms: Some(latency_ms),
+            installed: true,
+            reasons: vec!["Remote Windows broker model is paired and online.".to_string()],
+            blockers: Vec::new(),
+        }
     }
 }

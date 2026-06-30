@@ -6,16 +6,16 @@ recommend compatible local AI runtimes and models, manage provider health,
 route requests between local and trusted LAN machines, and provide a reliable
 pause/resume mode for all background automation.
 
-This repository is currently at Stage 11: Windows remote provider broker. The
+This repository is currently at Stage 12: Mac remote client. The
 Tauri desktop shell exists, exposes persisted pause/resume state, includes
 native hardware probing and specs export, scores a seeded local model catalog,
 includes local HTTP adapters for Ollama, LM Studio, custom OpenAI-compatible
 servers, MLX-LM, and llama.cpp, and now includes a dry-run runtime/model
 installer with consent, command hook previews, app-managed folders, progress,
 logs, pause, resume, and cancel. Router decisions now support Auto, Manual,
-Forced, Local only, Remote preferred placeholder, Remote only placeholder, and
-Paused modes with thresholds, fallback chains, decision reasons, and a routed
-test prompt panel. Notifications and background behavior now include a native
+Forced, Local only, Remote preferred, Remote only, and Paused modes with
+thresholds, fallback chains, decision reasons, local and remote candidates, and
+a routed test prompt panel. Notifications and background behavior now include a native
 menu/tray path, notification settings, launch-at-login/start-provider-at-login
 settings, a pause-aware background task manager, notification event history, and
 events for pause/resume, install completion, router changes, provider errors,
@@ -25,8 +25,12 @@ history, ignore/remind-later/install/install-and-switch actions, privacy mode,
 and pause-aware scheduled checks. Windows remote broker mode now has opt-in LAN
 sharing state, authenticated endpoint definitions, pairing codes, connected
 client tokens, revoke controls, firewall guidance, security warnings, and
-pause-policy behavior. Real installers/downloads, Mac remote client discovery,
-and remote model automation are intentionally deferred to later approved stages.
+pause-policy behavior. Mac remote client mode now has Bonjour/mDNS discovery,
+manual IP:port pairing, paired-device refresh, protected token-vault storage,
+remote specs/models/health/load/latency display, and router integration for
+Remote preferred, Remote only, and overloaded-local fallback. Real
+installers/downloads and release packaging remain intentionally deferred to
+later approved stages.
 
 ## Stage Gate Rule
 
@@ -98,6 +102,11 @@ start the next implementation stage until the user explicitly approves it.
   sharing, Windows-only broker start gate, authenticated endpoint catalog,
   pairing code and token flow, connected-client revoke, firewall/security
   guidance, pause-policy handling, Remote PCs broker UI, and endpoint previews.
+- Stage 12 Mac remote client: Rust `remote_client_core`, Bonjour/mDNS service
+  query for `_localai-router._tcp`, manual broker pairing, protected token
+  vault, remote health/spec/model/provider-status refresh, remote route
+  candidates, routed remote chat test prompts, pause gates, and Remote PCs
+  client UI.
 
 ## Planned Stack
 
@@ -147,14 +156,15 @@ Build the Windows installer from Windows:
 npm run build:windows
 ```
 
-Stage 11 note: the installer is dry-run only. It records realistic command hooks
+Stage 12 note: the installer is dry-run only. It records realistic command hooks
 and app-managed folder paths, but never executes commands or downloads model
 weights. Router decisions and routed test prompts exist for local providers.
-Remote preferred and remote-only routing remain explicit placeholders until the
-Mac remote client stage. Stage 10 update checks read local fixtures only; live
+Remote preferred and remote-only routing can now select paired Windows remote
+models when available. Stage 10 update checks read local fixtures only; live
 metadata calls and real downloads do not exist yet. Stage 11 broker mode includes
 a Windows-gated LAN HTTP listener plus command-driven endpoint previews for local
-verification; Mac client discovery/routing remains deferred to Stage 12.
+verification. Stage 12 includes fixture-backed local verification for remote
+client flows; real LAN pairing requires a running Windows broker and token.
 
 ## Visual Baseline
 
@@ -184,7 +194,7 @@ badge; amber paused states; no marketing hero treatment.
 - [x] Stage 9 - Notifications and Background Behavior
 - [x] Stage 10 - Model Update Metadata Checker
 - [x] Stage 11 - Windows Remote Provider Broker
-- [ ] Stage 12 - Mac Remote Client
+- [x] Stage 12 - Mac Remote Client
 - [ ] Stage 13 - Packaging and Installers
 - [ ] Stage 14 - Final Testing, Documentation, and Polish
 
@@ -327,7 +337,7 @@ marked as a stub.
   resume.
 - Stop and ask for approval.
 
-### Stage 12 - Mac Remote Client
+### [x] Stage 12 - Mac Remote Client
 
 - Wire Remote PCs page to real discovery/client logic.
 - Add mDNS/Bonjour discovery for `_localai-router._tcp`.
