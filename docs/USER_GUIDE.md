@@ -1,6 +1,7 @@
 # User Guide
 
-This guide is organized by task.
+This guide is organized by task. For end-to-end examples, read
+[Scenario Walkthroughs](SCENARIOS.md).
 
 ## First Launch
 
