@@ -253,6 +253,18 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.ghost-button.danger-action:not(:disabled) {
+  border-color: #f3b7b1;
+  background: #fff7f6;
+  color: #b42318;
+  cursor: pointer;
+}
+
+.ghost-button.danger-action:not(:disabled):hover {
+  border-color: #e17b70;
+  background: #fff1ef;
+}
+
 .divider {
   width: 1px;
   height: 20px;
@@ -1337,6 +1349,10 @@ button:disabled {
   cursor: pointer;
 }
 
+.provider-model-table td:last-child {
+  min-width: 220px;
+}
+
 .provider-chat-panel,
 .provider-plan-panel {
   grid-column: 1 / -1;
@@ -1624,6 +1640,13 @@ button:disabled {
 .table-action {
   min-height: 30px;
   padding: 0 10px;
+}
+
+.table-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .json-preview {

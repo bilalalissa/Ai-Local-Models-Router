@@ -11,6 +11,8 @@ export type ProviderCapability =
   | "StartStop"
   | "InstallModel"
   | "UninstallModel"
+  | "UnloadModel"
+  | "RemoveModelWeights"
   | "PauseResumeTasks"
   | "Logs"
   | "ProviderFolder";
@@ -91,6 +93,19 @@ export type ProviderInstallPlan = {
   summary: string;
   commands: string[];
   notes: string[];
+};
+
+export type ProviderMemoryActionKind = "UnloadFromMemory" | "RemoveWeightsFromDisk";
+
+export type ProviderMemoryActionResult = {
+  provider_id: string;
+  model_id: string;
+  action: ProviderMemoryActionKind;
+  status: ProviderStatus;
+  freed_memory: boolean;
+  freed_disk: boolean;
+  requires_redownload: boolean;
+  message: string;
 };
 
 type FallbackProvider = {
@@ -333,6 +348,20 @@ export async function previewProviderInstallPlan(providerId: string): Promise<Pr
   return installPlanFor(providerById(providerId));
 }
 
+export async function unloadProviderModel(providerId: string, modelId: string): Promise<ProviderMemoryActionResult> {
+  if (isTauriRuntime()) {
+    return invoke<ProviderMemoryActionResult>("unload_provider_model", { providerId, modelId });
+  }
+  return updateProviderModelMemory(providerId, modelId, "UnloadFromMemory");
+}
+
+export async function removeProviderModelWeights(providerId: string, modelId: string): Promise<ProviderMemoryActionResult> {
+  if (isTauriRuntime()) {
+    return invoke<ProviderMemoryActionResult>("remove_provider_model_weights", { providerId, modelId });
+  }
+  return updateProviderModelMemory(providerId, modelId, "RemoveWeightsFromDisk");
+}
+
 export async function subscribeProviderHealth(
   onChange: (status: ProviderStatus) => void
 ): Promise<UnlistenFn> {
@@ -353,6 +382,55 @@ function updateProvider(providerId: string, update: (provider: FallbackProvider)
   const status = statusFromFallback(providers[index]);
   emitProviderStatus(status);
   return status;
+}
+
+function updateProviderModelMemory(
+  providerId: string,
+  modelId: string,
+  action: ProviderMemoryActionKind
+): ProviderMemoryActionResult {
+  let resolvedModel = modelId;
+  const status = updateProvider(providerId, (provider) => {
+    const requiredCapability =
+      action === "RemoveWeightsFromDisk" ? "RemoveModelWeights" : "UnloadModel";
+    if (!provider.definition.capabilities.includes(requiredCapability)) {
+      throw new Error("memory cleanup is not supported for this provider adapter yet");
+    }
+    const model = provider.models.find((item) => item.id === modelId) ?? provider.models[0];
+    if (!model) throw new Error(`no provider model available for ${providerId}`);
+    resolvedModel = model.id;
+    const nextModels =
+      action === "RemoveWeightsFromDisk"
+        ? provider.models.filter((item) => item.id !== model.id)
+        : provider.models;
+    return {
+      ...provider,
+      models: nextModels,
+      logs: [
+        logEntry(
+          providerId,
+          action === "RemoveWeightsFromDisk" ? "warn" : "info",
+          action === "RemoveWeightsFromDisk"
+            ? `Browser fallback removed model weights for ${model.id}.`
+            : `Browser fallback unloaded ${model.id} from memory.`
+        ),
+        ...provider.logs
+      ]
+    };
+  });
+  return {
+    provider_id: providerId,
+    model_id: resolvedModel,
+    action,
+    status,
+    freed_memory: true,
+    freed_disk: action === "RemoveWeightsFromDisk",
+    requires_redownload: action === "RemoveWeightsFromDisk",
+    message:
+      action === "RemoveWeightsFromDisk"
+        ? "Model weights removed from disk; re-download is required before reuse."
+        : "Model unloaded from memory; weights remain installed."
+  };
 }
 
 function readFallbackProviders(): FallbackProvider[] {
@@ -422,6 +500,7 @@ function providerSeed(
       "StreamingChat",
       "StartStop",
       "InstallModel",
+      ...(kind === "Ollama" ? (["UnloadModel", "RemoveModelWeights"] as ProviderCapability[]) : []),
       "PauseResumeTasks",
       "Logs",
       "ProviderFolder"

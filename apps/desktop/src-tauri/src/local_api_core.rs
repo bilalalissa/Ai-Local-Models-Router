@@ -220,6 +220,9 @@ fn manifest_response() -> LocalApiResponse {
                 "task_aware_model_selection": true,
                 "provider_autostart": true,
                 "automatic_live_install": true,
+                "unload_model_from_memory": true,
+                "remove_model_weights": true,
+                "remove_model_weights_supported_providers": ["ollama-local"],
                 "streaming_chat": false
             }
         }),
@@ -293,6 +296,13 @@ fn config_response(provider_state: &Arc<Mutex<ProviderManager>>) -> LocalApiResp
                 "requires_user_consent": true,
                 "supported_live_plans": ["apple-silicon-recommended", "intel-mac-recommended"],
                 "dry_run_default": true
+            },
+            "memory_capabilities": {
+                "unload_model_from_memory": true,
+                "remove_model_weights": true,
+                "remove_model_weights_supported_providers": ["ollama-local"],
+                "requires_confirmation_for_disk_removal": true,
+                "remove_weights_note": "Removing model weights frees disk space but requires downloading the model again before reuse."
             },
             "selected_runtime": selected,
             "provider_statuses": statuses,
@@ -775,6 +785,7 @@ mod tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(response.body["auth_required"], false);
         assert_eq!(response.body["capabilities"]["model_switching"], true);
+        assert_eq!(response.body["capabilities"]["remove_model_weights"], true);
         assert_eq!(
             response.body["endpoints"]["recommend"],
             "/api/integration/recommend"

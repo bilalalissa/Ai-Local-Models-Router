@@ -29,7 +29,8 @@ use model_catalog::{
 };
 use provider_core::{
     ProviderChatRequest, ProviderChatResponse, ProviderInstallPlan, ProviderLogEntry,
-    ProviderManager, ProviderModel, ProviderSettings, ProviderSettingsPatch, ProviderStatus,
+    ProviderManager, ProviderMemoryActionResult, ProviderModel, ProviderSettings,
+    ProviderSettingsPatch, ProviderStatus,
 };
 use remote_broker_core::{
     remote_broker_file_path, BrokerEndpointData, BrokerEndpointRequest, BrokerEndpointResponse,
@@ -670,6 +671,40 @@ fn preview_provider_install_plan(
 }
 
 #[tauri::command]
+fn unload_provider_model(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+    model_id: String,
+) -> Result<ProviderMemoryActionResult, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let result = providers.unload_model(&provider_id, &model_id)?;
+    emit_provider_status(&app, &result.status);
+    let logs = providers.logs(Some(&provider_id));
+    let _ = app.emit("log-appended", logs.first());
+    Ok(result)
+}
+
+#[tauri::command]
+fn remove_provider_model_weights(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+    model_id: String,
+) -> Result<ProviderMemoryActionResult, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let result = providers.remove_model_weights(&provider_id, &model_id)?;
+    emit_provider_status(&app, &result.status);
+    let logs = providers.logs(Some(&provider_id));
+    let _ = app.emit("log-appended", logs.first());
+    Ok(result)
+}
+
+#[tauri::command]
 fn get_updater_snapshot(
     updater_state: State<'_, SharedUpdaterState>,
 ) -> Result<UpdaterSnapshot, String> {
@@ -1031,6 +1066,8 @@ pub fn run() {
             get_provider_settings,
             update_provider_settings,
             preview_provider_install_plan,
+            unload_provider_model,
+            remove_provider_model_weights,
             get_background_snapshot,
             update_background_settings,
             run_background_tick,

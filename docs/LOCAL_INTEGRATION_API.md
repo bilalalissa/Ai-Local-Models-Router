@@ -53,13 +53,24 @@ The integration API answers:
 
 `/api/integration/config` returns a copy/export-friendly JSON payload with the
 current router URL, OpenAI-compatible URL, Learning Boost environment values,
-installer capabilities, selected runtime if one is reachable, and provider
-health states.
+installer capabilities, memory cleanup capabilities, selected runtime if one is
+reachable, and provider health states.
 
 `/v1/models` always exposes the stable `local-model` alias for companion apps.
 `/api/integration/select-model` and `/api/integration/select-runtime` let a
 companion app choose the runtime behind that alias before sending chat. The
 manifest advertises this with `capabilities.model_switching: true`.
+
+The manifest and config also advertise memory cleanup support:
+
+- `capabilities.unload_model_from_memory`
+- `capabilities.remove_model_weights`
+- `memory_capabilities.remove_model_weights_supported_providers`
+
+In this stage, Local AI Router supports memory unload and disk weight removal
+for Ollama through provider-native APIs. Removing weights requires user
+confirmation in the desktop UI and the model must be downloaded again before
+reuse.
 
 Selection requests can include:
 

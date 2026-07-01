@@ -31,6 +31,8 @@ pub enum ProviderCapability {
     StartStop,
     InstallModel,
     UninstallModel,
+    UnloadModel,
+    RemoveModelWeights,
     PauseResumeTasks,
     Logs,
     ProviderFolder,
@@ -123,6 +125,24 @@ pub struct ProviderInstallPlan {
     pub notes: Vec<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum ProviderMemoryActionKind {
+    UnloadFromMemory,
+    RemoveWeightsFromDisk,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderMemoryActionResult {
+    pub provider_id: String,
+    pub model_id: String,
+    pub action: ProviderMemoryActionKind,
+    pub status: ProviderStatus,
+    pub freed_memory: bool,
+    pub freed_disk: bool,
+    pub requires_redownload: bool,
+    pub message: String,
+}
+
 pub trait ProviderAdapter {
     fn definition(&self) -> ProviderDefinition;
     fn health(&mut self) -> ProviderStatus;
@@ -138,6 +158,11 @@ pub trait ProviderAdapter {
     fn update_settings(&mut self, patch: ProviderSettingsPatch) -> ProviderStatus;
     fn install_plan(&self) -> ProviderInstallPlan;
     fn select_model(&mut self, requested_model_id: &str) -> Result<ProviderStatus, String>;
+    fn unload_model(&mut self, model_id: &str) -> Result<ProviderMemoryActionResult, String>;
+    fn remove_model_weights(
+        &mut self,
+        model_id: &str,
+    ) -> Result<ProviderMemoryActionResult, String>;
 }
 
 #[derive(Debug)]
@@ -264,6 +289,24 @@ impl ProviderManager {
     ) -> Result<ProviderStatus, String> {
         self.provider_mut(provider_id)
             .and_then(|provider| provider.select_model(requested_model_id))
+    }
+
+    pub fn unload_model(
+        &mut self,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<ProviderMemoryActionResult, String> {
+        self.provider_mut(provider_id)
+            .and_then(|provider| provider.unload_model(model_id))
+    }
+
+    pub fn remove_model_weights(
+        &mut self,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<ProviderMemoryActionResult, String> {
+        self.provider_mut(provider_id)
+            .and_then(|provider| provider.remove_model_weights(model_id))
     }
 
     pub fn logs(&self, provider_id: Option<&str>) -> Vec<ProviderLogEntry> {
@@ -405,6 +448,21 @@ impl ProviderAdapter for ProviderInstance {
     fn select_model(&mut self, requested_model_id: &str) -> Result<ProviderStatus, String> {
         match self {
             Self::LocalHttp(provider) => provider.select_model(requested_model_id),
+        }
+    }
+
+    fn unload_model(&mut self, model_id: &str) -> Result<ProviderMemoryActionResult, String> {
+        match self {
+            Self::LocalHttp(provider) => provider.unload_model(model_id),
+        }
+    }
+
+    fn remove_model_weights(
+        &mut self,
+        model_id: &str,
+    ) -> Result<ProviderMemoryActionResult, String> {
+        match self {
+            Self::LocalHttp(provider) => provider.remove_model_weights(model_id),
         }
     }
 }
@@ -559,6 +617,30 @@ impl LocalHttpProvider {
             })
             .or_else(|| self.default_model_id.clone())
             .unwrap_or_else(|| "local-model".to_string())
+    }
+
+    fn resolve_requested_model_for_action(&mut self, requested: &str) -> Result<String, String> {
+        if self.last_models.is_empty() {
+            if let Ok((models, latency_ms)) = self.fetch_models() {
+                self.last_models = models;
+                self.last_running = true;
+                self.last_latency_ms = Some(latency_ms);
+                self.last_health = ProviderHealth::Healthy;
+            }
+        }
+        let requested = requested.trim();
+        if requested.is_empty() || requested == "local-model" {
+            return self
+                .active_model_id()
+                .or_else(|| self.default_model_id.clone())
+                .ok_or_else(|| "no active provider model is available".to_string());
+        }
+        resolve_provider_model_id(&self.protocol, requested, &self.last_models).ok_or_else(|| {
+            format!(
+                "requested model is not installed for {}: {requested}",
+                self.definition.name
+            )
+        })
     }
 
     fn push_log(&mut self, level: &str, message: &str) {
@@ -829,6 +911,97 @@ impl ProviderAdapter for LocalHttpProvider {
         );
         Ok(self.status("Provider runtime model selected."))
     }
+
+    fn unload_model(&mut self, model_id: &str) -> Result<ProviderMemoryActionResult, String> {
+        if !matches!(self.protocol, ProviderProtocol::Ollama) {
+            return Err("memory unload is not supported for this provider adapter yet".to_string());
+        }
+        let resolved_model_id = self.resolve_requested_model_for_action(model_id)?;
+
+        let response = local_http_request(
+            &self.settings.base_url,
+            "POST",
+            "/api/generate",
+            Some(json!({
+                "model": resolved_model_id.clone(),
+                "prompt": "",
+                "keep_alive": 0
+            })),
+        )?;
+        if response.status_code >= 400 {
+            self.push_log(
+                "warn",
+                &format!("Ollama unload returned HTTP {}", response.status_code),
+            );
+            return Err(format!("provider returned HTTP {}", response.status_code));
+        }
+        self.push_log(
+            "info",
+            &format!("Unloaded {resolved_model_id} from provider memory."),
+        );
+        self.last_health = ProviderHealth::Healthy;
+        self.last_running = true;
+        self.last_latency_ms = Some(response.latency_ms);
+        let status = self.status("Model unloaded from provider memory.");
+        Ok(ProviderMemoryActionResult {
+            provider_id: self.definition.id.clone(),
+            model_id: resolved_model_id,
+            action: ProviderMemoryActionKind::UnloadFromMemory,
+            status,
+            freed_memory: true,
+            freed_disk: false,
+            requires_redownload: false,
+            message: "Model unloaded from memory; weights remain installed.".to_string(),
+        })
+    }
+
+    fn remove_model_weights(
+        &mut self,
+        model_id: &str,
+    ) -> Result<ProviderMemoryActionResult, String> {
+        if !matches!(self.protocol, ProviderProtocol::Ollama) {
+            return Err(
+                "model weight removal is not supported for this provider adapter yet".to_string(),
+            );
+        }
+        let resolved_model_id = self.resolve_requested_model_for_action(model_id)?;
+        let _ = self.unload_model(&resolved_model_id);
+        let response = local_http_request(
+            &self.settings.base_url,
+            "DELETE",
+            "/api/delete",
+            Some(json!({ "model": resolved_model_id.clone() })),
+        )?;
+        if response.status_code >= 400 {
+            self.push_log(
+                "warn",
+                &format!("Ollama model delete returned HTTP {}", response.status_code),
+            );
+            return Err(format!("provider returned HTTP {}", response.status_code));
+        }
+        self.default_model_id = self
+            .default_model_id
+            .take()
+            .filter(|default| default != &resolved_model_id);
+        self.last_models
+            .retain(|model| model.id != resolved_model_id);
+        self.push_log(
+            "warn",
+            &format!("Removed model weights for {resolved_model_id} from disk."),
+        );
+        let status = self.status("Model weights removed from disk.");
+        Ok(ProviderMemoryActionResult {
+            provider_id: self.definition.id.clone(),
+            model_id: resolved_model_id,
+            action: ProviderMemoryActionKind::RemoveWeightsFromDisk,
+            status,
+            freed_memory: true,
+            freed_disk: true,
+            requires_redownload: true,
+            message: "Model weights removed from disk; re-download is required before reuse."
+                .to_string(),
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -856,23 +1029,28 @@ fn local_provider(
     launch_command: Option<&str>,
     notes: &str,
 ) -> ProviderInstance {
+    let mut capabilities = vec![
+        ProviderCapability::Health,
+        ProviderCapability::ListModels,
+        ProviderCapability::Chat,
+        ProviderCapability::StreamingChat,
+        ProviderCapability::StartStop,
+        ProviderCapability::InstallModel,
+        ProviderCapability::PauseResumeTasks,
+        ProviderCapability::Logs,
+        ProviderCapability::ProviderFolder,
+    ];
+    if matches!(protocol, ProviderProtocol::Ollama) {
+        capabilities.push(ProviderCapability::UnloadModel);
+        capabilities.push(ProviderCapability::RemoveModelWeights);
+    }
     let definition = ProviderDefinition {
         id: id.to_string(),
         name: name.to_string(),
         kind,
         base_url: normalize_base_url(base_url),
         folder: folder.to_string(),
-        capabilities: vec![
-            ProviderCapability::Health,
-            ProviderCapability::ListModels,
-            ProviderCapability::Chat,
-            ProviderCapability::StreamingChat,
-            ProviderCapability::StartStop,
-            ProviderCapability::InstallModel,
-            ProviderCapability::PauseResumeTasks,
-            ProviderCapability::Logs,
-            ProviderCapability::ProviderFolder,
-        ],
+        capabilities,
     };
     let settings = ProviderSettings {
         provider_id: id.to_string(),
@@ -1295,6 +1473,48 @@ mod tests {
         assert!(statuses
             .iter()
             .any(|status| status.definition.kind == ProviderKind::LlamaCpp));
+    }
+
+    #[test]
+    fn ollama_adapter_declares_memory_cleanup_capabilities() {
+        let mut manager = ProviderManager::seeded();
+        let statuses = manager.statuses();
+        let ollama = statuses
+            .iter()
+            .find(|status| status.definition.id == "ollama-local")
+            .expect("ollama provider exists");
+        let lm_studio = statuses
+            .iter()
+            .find(|status| status.definition.id == "lm-studio-local")
+            .expect("lm studio provider exists");
+
+        assert!(ollama
+            .definition
+            .capabilities
+            .contains(&ProviderCapability::UnloadModel));
+        assert!(ollama
+            .definition
+            .capabilities
+            .contains(&ProviderCapability::RemoveModelWeights));
+        assert!(!lm_studio
+            .definition
+            .capabilities
+            .contains(&ProviderCapability::RemoveModelWeights));
+    }
+
+    #[test]
+    fn openai_compatible_memory_actions_are_rejected_without_network_probe() {
+        let mut manager = ProviderManager::seeded();
+
+        let unload_error = manager
+            .unload_model("lm-studio-local", "local-model")
+            .expect_err("unsupported unload should fail");
+        let remove_error = manager
+            .remove_model_weights("lm-studio-local", "local-model")
+            .expect_err("unsupported disk removal should fail");
+
+        assert!(unload_error.contains("not supported"));
+        assert!(remove_error.contains("not supported"));
     }
 
     #[test]

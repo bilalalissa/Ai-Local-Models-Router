@@ -24,6 +24,21 @@ are competing for memory on the same machine.
 7. Remove unused model weights from disk when storage is low, but unload the
    model from memory first if it is currently running.
 
+## In-App Memory Actions
+
+Open **Providers > Model Listing** and use the **Memory / Disk** actions for the
+selected provider.
+
+- **Unload RAM** asks the provider to unload the selected model from memory.
+  The model stays installed, so it can be used again without downloading.
+- **Remove weights** removes the selected model weights from disk after a
+  confirmation prompt. This frees storage and requires downloading the model
+  again before reuse.
+
+These actions are provider-native. In this stage, Local AI Router supports both
+actions for Ollama. Other OpenAI-compatible providers may need their own UI or
+CLI cleanup because they do not expose one standard delete/unload API.
+
 ## Ollama Memory Controls
 
 Ollama can keep models loaded after a request for faster follow-up responses.
@@ -99,14 +114,17 @@ curl -X DELETE http://127.0.0.1:11434/api/delete \
   --data '{"model":"llama3.1:8b"}'
 ```
 
-Recommended app behavior for a future **Remove from disk** action:
+The in-app **Remove weights** action follows this behavior:
 
-1. Show model name, provider, disk size, and last-used time.
+1. Show model name, provider, and disk size when the provider reports it.
 2. Warn that the model must be downloaded again before future use.
-3. Block deletion if a workflow is actively using the model.
-4. Stop/unload the model first when the provider supports it.
-5. Delete through the provider API or CLI, not by manually deleting random files.
-6. Refresh the model list and router decision after deletion.
+3. Stop/unload the model first when the provider supports it.
+4. Delete through the provider API or CLI, not by manually deleting random files.
+5. Refresh the model list and provider status after deletion.
+
+Pause Learning Boost or other companion apps before removing weights. Local AI
+Router can block its own paused provider tasks, but it cannot yet prove that
+every external app has stopped using the same provider model.
 
 Use this option for large models you rarely need, old versions, duplicate
 quantizations, or models that should run on the remote broker instead of the
@@ -190,10 +208,9 @@ These are the recommended product changes for memory-wise operation.
    - Add per-provider idle unload settings.
    - For Ollama, use `keep_alive` or `ollama stop` when the active workflow ends.
 
-7. **Storage cleanup actions**
-   - Add **Remove from disk** for installed models.
-   - Show expected freed disk size and require confirmation.
-   - Prefer provider-native commands such as `ollama rm` or `DELETE /api/delete`.
+7. **Storage cleanup improvements**
+   - Show expected freed disk size when the provider exposes exact weight size.
+   - Add last-used timestamps for cleanup decisions.
    - Keep a reinstall action next to removed recommended models.
 
 8. **Memory-aware model scoring**

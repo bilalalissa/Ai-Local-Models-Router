@@ -102,12 +102,14 @@ import {
   pauseProviderTasks,
   previewProviderInstallPlan,
   refreshProviderHealth,
+  removeProviderModelWeights,
   resumeAllProviders,
   resumeProviderTasks,
   sendProviderTestChat,
   startProvider,
   stopProvider,
   subscribeProviderHealth,
+  unloadProviderModel,
   updateProviderSettings
 } from "./providers";
 import {
@@ -1447,6 +1449,61 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
     }
   }, [selectedStatus]);
 
+  const refreshSelectedProviderDetails = useCallback(
+    async (providerId: string) => {
+      const [nextModels, nextLogs] = await Promise.all([
+        listProviderModels(providerId),
+        getProviderLogs(providerId)
+      ]);
+      setModels(nextModels);
+      setLogs(nextLogs);
+      setSelectedModelId((current) =>
+        current && nextModels.some((model) => model.id === current)
+          ? current
+          : nextModels.find((model) => model.supports_chat)?.id ?? nextModels[0]?.id ?? null
+      );
+    },
+    []
+  );
+
+  const handleUnloadModel = useCallback(
+    async (model: ProviderModel) => {
+      if (!selectedStatus) return;
+      setError(null);
+      try {
+        const result = await unloadProviderModel(selectedStatus.definition.id, model.id);
+        updateOneStatus(result.status);
+        await refreshSelectedProviderDetails(selectedStatus.definition.id);
+        setStatusMessage(result.message);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Model unload failed.");
+      }
+    },
+    [refreshSelectedProviderDetails, selectedStatus, updateOneStatus]
+  );
+
+  const handleRemoveModelWeights = useCallback(
+    async (model: ProviderModel) => {
+      if (!selectedStatus) return;
+      const approved = window.confirm(
+        `Remove ${model.display_name} from disk?\n\nThis frees storage but the model must be downloaded again before reuse.`
+      );
+      if (!approved) return;
+      setError(null);
+      try {
+        const result = await removeProviderModelWeights(selectedStatus.definition.id, model.id);
+        updateOneStatus(result.status);
+        await refreshSelectedProviderDetails(selectedStatus.definition.id);
+        setStatusMessage(result.message);
+      } catch (err) {
+        setError(errorMessage(err));
+        setStatusMessage("Model weight removal failed.");
+      }
+    },
+    [refreshSelectedProviderDetails, selectedStatus, updateOneStatus]
+  );
+
   if (statuses.length === 0) {
     return (
       <div className="providers-page">
@@ -1624,6 +1681,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
                   <th>Format</th>
                   <th>Size</th>
                   <th>Installed</th>
+                  <th>Memory / Disk</th>
                 </tr>
               </thead>
               <tbody>
@@ -1637,10 +1695,47 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
                     <td>{model.format}</td>
                     <td>{formatBytesGb(model.size_bytes)}</td>
                     <td>{model.installed ? "Yes" : "No"}</td>
+                    <td>
+                      <div className="table-action-row">
+                        <button
+                          className="secondary-button table-action"
+                          disabled={
+                            !selectedStatus.running ||
+                            !selectedStatus.definition.capabilities.includes("UnloadModel")
+                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleUnloadModel(model);
+                          }}
+                          type="button"
+                        >
+                          Unload RAM
+                        </button>
+                        <button
+                          className="ghost-button table-action danger-action"
+                          disabled={
+                            !selectedStatus.running ||
+                            !model.installed ||
+                            !selectedStatus.definition.capabilities.includes("RemoveModelWeights")
+                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleRemoveModelWeights(model);
+                          }}
+                          type="button"
+                        >
+                          Remove weights
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <p className="fine-print">
+              Unload RAM frees memory while keeping weights installed. Remove weights frees disk space
+              and requires downloading the model again before reuse.
+            </p>
           </Panel>
 
           <Panel title="Local Test Chat" className="provider-chat-panel">
@@ -4307,6 +4402,14 @@ function buildRouterConfigJson(decision: RouterDecision | null, providers: Provi
         requires_user_consent: true,
         supported_live_plans: ["apple-silicon-recommended", "intel-mac-recommended"],
         dry_run_default: true
+      },
+      memory_capabilities: {
+        unload_model_from_memory: true,
+        remove_model_weights: true,
+        remove_model_weights_supported_providers: ["ollama-local"],
+        requires_confirmation_for_disk_removal: true,
+        remove_weights_note:
+          "Removing model weights frees disk space but requires downloading the model again before reuse."
       },
       selected_route: selected
         ? {
