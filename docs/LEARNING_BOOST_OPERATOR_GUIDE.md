@@ -3,6 +3,11 @@
 Use this guide when LLM Agent Learning Boost needs to communicate with Local AI
 Router on the same Mac.
 
+For the implementation handoff, read
+[Learning Boost Patch Clarification](LEARNING_BOOST_PATCH_CLARIFICATION.md).
+For memory-constrained operation, read
+[Memory-Wise Operations](MEMORY_WISE_OPERATIONS.md).
+
 ## What Connects To What
 
 Learning Boost talks to Local AI Router through the localhost OpenAI-compatible
