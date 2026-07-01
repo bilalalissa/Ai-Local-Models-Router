@@ -21,6 +21,8 @@ are competing for memory on the same machine.
    model call.
 6. Use a Windows broker or another LAN machine for large models when the Mac is
    already under pressure.
+7. Remove unused model weights from disk when storage is low, but unload the
+   model from memory first if it is currently running.
 
 ## Ollama Memory Controls
 
@@ -59,6 +61,56 @@ OLLAMA_KEEP_ALIVE=30s ollama serve
 
 Use longer keep-alive only when the machine has enough free RAM and you need
 faster repeated responses.
+
+## Remove Model Weights From Disk
+
+Removing model weights is useful when disk space is low or when a large model
+should not be available on this machine anymore. It is different from unloading
+from memory:
+
+- **Unload from memory** frees RAM now but keeps the model installed.
+- **Remove weights from disk** frees storage and requires re-download before the
+  model can be used again.
+- **Uninstall the provider** removes the runtime application itself.
+
+For Ollama, list installed models first:
+
+```bash
+ollama ls
+```
+
+Stop the model if it is loaded:
+
+```bash
+ollama stop llama3.1:8b
+```
+
+Remove the model weights:
+
+```bash
+ollama rm llama3.1:8b
+```
+
+Or use the Ollama API:
+
+```bash
+curl -X DELETE http://127.0.0.1:11434/api/delete \
+  -H 'content-type: application/json' \
+  --data '{"model":"llama3.1:8b"}'
+```
+
+Recommended app behavior for a future **Remove from disk** action:
+
+1. Show model name, provider, disk size, and last-used time.
+2. Warn that the model must be downloaded again before future use.
+3. Block deletion if a workflow is actively using the model.
+4. Stop/unload the model first when the provider supports it.
+5. Delete through the provider API or CLI, not by manually deleting random files.
+6. Refresh the model list and router decision after deletion.
+
+Use this option for large models you rarely need, old versions, duplicate
+quantizations, or models that should run on the remote broker instead of the
+local Mac.
 
 ## Local AI Router Settings To Prefer
 
@@ -138,12 +190,18 @@ These are the recommended product changes for memory-wise operation.
    - Add per-provider idle unload settings.
    - For Ollama, use `keep_alive` or `ollama stop` when the active workflow ends.
 
-7. **Memory-aware model scoring**
+7. **Storage cleanup actions**
+   - Add **Remove from disk** for installed models.
+   - Show expected freed disk size and require confirmation.
+   - Prefer provider-native commands such as `ollama rm` or `DELETE /api/delete`.
+   - Keep a reinstall action next to removed recommended models.
+
+8. **Memory-aware model scoring**
    - Penalize models whose estimated working set would leave too little free
      memory.
    - Prefer remote candidates when local memory is above threshold.
 
-8. **Learning Boost backpressure**
+9. **Learning Boost backpressure**
    - Return clear `memory_pressure` guidance from Local AI Router so Learning
      Boost can reduce batch size or pause optional work.
 
@@ -157,4 +215,5 @@ When the machine is full and main apps must stay running:
 4. Use a 3-4B model for quick chat and smaller follow-up work.
 5. Stop unused model servers.
 6. Unload Ollama models after large tasks.
-7. Use remote broker mode for larger models or long summarization jobs.
+7. Remove unused large model weights from disk when storage is low.
+8. Use remote broker mode for larger models or long summarization jobs.
