@@ -2,6 +2,7 @@ mod app_state;
 mod background_core;
 mod hardware_probe;
 mod installer_core;
+mod local_api_core;
 mod model_catalog;
 mod provider_core;
 mod remote_broker_core;
@@ -43,7 +44,7 @@ use router_core::{
     decide_route, run_router_test, RouterDecision, RouterDecisionRequest, RouterTestRequest,
     RouterTestResult,
 };
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem, Submenu},
     tray::TrayIconBuilder,
@@ -57,7 +58,7 @@ use updater_core::{
 type SharedAppState = Mutex<AppStateStore>;
 type SharedBackgroundState = Mutex<BackgroundManager>;
 type SharedInstallerState = Mutex<InstallerManager>;
-type SharedProviderState = Mutex<ProviderManager>;
+type SharedProviderState = Arc<Mutex<ProviderManager>>;
 type SharedRemoteBrokerState = Mutex<RemoteBrokerManager>;
 type SharedRemoteClientState = Mutex<RemoteClientManager>;
 type SharedUpdaterState = Mutex<UpdaterManager>;
@@ -986,7 +987,9 @@ pub fn run() {
             app.manage(Mutex::new(store));
             app.manage(Mutex::new(background));
             app.manage(Mutex::new(InstallerManager::seeded(app_data_dir)));
-            app.manage(Mutex::new(ProviderManager::seeded()));
+            let provider_manager = Arc::new(Mutex::new(ProviderManager::seeded()));
+            local_api_core::spawn_local_integration_api(Arc::clone(&provider_manager));
+            app.manage(provider_manager);
             app.manage(Mutex::new(remote_broker));
             app.manage(Mutex::new(remote_client));
             app.manage(Mutex::new(updater));

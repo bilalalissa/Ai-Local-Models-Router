@@ -133,6 +133,7 @@ For remote routing:
 - [Scenario Walkthroughs](docs/SCENARIOS.md): end-to-end setup and troubleshooting flows.
 - [Regular vs Dry-Run Methods](docs/REGULAR_VS_DRY_RUN.md): what changes your machine and what only previews work.
 - [Providers](docs/PROVIDERS.md): provider expectations and limitations.
+- [Local Integration API](docs/LOCAL_INTEGRATION_API.md): how companion apps such as LLM Agent Learning Boost connect to the localhost router endpoint.
 - [Model Catalog](docs/MODEL_CATALOG.md): how compatibility labels work.
 - [Pause Mode](docs/PAUSE_MODE.md): what pause/resume affects.
 - [Security](docs/SECURITY.md): local-network and token guidance.

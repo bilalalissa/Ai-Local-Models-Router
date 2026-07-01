@@ -67,6 +67,33 @@ Expected result: a healthy provider lists models and can answer a tiny test
 prompt. If a provider is stopped, start it outside the app or use the provider
 start controls where available.
 
+## Connect LLM Agent Learning Boost
+
+Use the localhost integration API when another local app should ask Local AI
+Router for provider recommendations or OpenAI-compatible chat.
+
+1. Keep Local AI Router running.
+2. Configure Learning Boost with:
+
+```env
+LOCAL_AI_ROUTER_BASE_URL=http://127.0.0.1:17640
+OPENAI_COMPAT_BASE_URL=http://127.0.0.1:17640/v1
+OPENAI_COMPAT_AUTH_METHOD=none
+DEFAULT_AI_PROVIDER=openai_compat
+DEFAULT_AI_MODEL=local-model
+```
+
+3. Start at least one provider outside the app, such as Ollama, LM Studio,
+   MLX-LM, or llama.cpp.
+4. Confirm `http://127.0.0.1:17640/api/health` responds.
+5. Confirm the provider endpoint also responds, for example
+   `http://127.0.0.1:11434` for Ollama or `http://127.0.0.1:1234/v1/models`
+   for LM Studio.
+
+Expected result: Learning Boost can reach the router. If chat returns
+`no_local_provider`, the router is working but no underlying local model server
+is running yet. See [Local Integration API](LOCAL_INTEGRATION_API.md).
+
 ## Use The Dry-Run Installer
 
 ![Models installer flow](assets/screenshots/models-installer.png)

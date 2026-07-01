@@ -34,3 +34,8 @@ For users, the practical difference is:
   against providers you already run.
 - Recommended setup/install flows are dry-run actions that preview commands and
   folders without installing runtimes or downloading model weights.
+
+Companion apps can connect through the localhost
+[Local Integration API](LOCAL_INTEGRATION_API.md). That API is regular/live for
+health checks and chat routing, but it still depends on a provider process such
+as Ollama, LM Studio, MLX-LM, or llama.cpp being started separately.

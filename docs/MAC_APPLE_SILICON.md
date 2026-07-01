@@ -51,6 +51,23 @@ requires Developer ID signing and notarization.
 4. Open **Providers** and refresh health.
 5. Open **Router** and run a local test prompt.
 
+## Companion App Connection
+
+For LLM Agent Learning Boost or another local OpenAI-compatible client, point
+the client at Local AI Router:
+
+```env
+LOCAL_AI_ROUTER_BASE_URL=http://127.0.0.1:17640
+OPENAI_COMPAT_BASE_URL=http://127.0.0.1:17640/v1
+OPENAI_COMPAT_AUTH_METHOD=none
+DEFAULT_AI_MODEL=local-model
+```
+
+Then start MLX-LM, Ollama, LM Studio, or another local provider. If
+`/api/health` responds but chat reports `no_local_provider`, the router is
+reachable and the missing piece is the provider/model server. See
+[Local Integration API](LOCAL_INTEGRATION_API.md).
+
 ## Remote Windows Models
 
 Use remote routing when a Windows machine has stronger GPU resources:
