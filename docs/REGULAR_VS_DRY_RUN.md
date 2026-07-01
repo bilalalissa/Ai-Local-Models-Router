@@ -25,8 +25,8 @@ What to expect:
 - The action can succeed or fail based on the real machine, network, provider,
   port, token, firewall, or operating system state.
 - The action may change app state, provider state, paired-device state, or logs.
-- The action does not automatically download model weights unless a future
-  release explicitly adds live installer/download support.
+- Live installer mode may install packages, start a provider, and download model
+  weights after explicit consent.
 
 ## Dry-Run Methods
 
@@ -35,8 +35,8 @@ large side effect.
 
 Examples in the current app:
 
-- **Models** recommended setup flow.
-- Runtime/model installer command plans.
+- **Models** recommended setup flow when **Dry run** is selected.
+- Runtime/model installer command plans before you approve live execution.
 - Update actions that preview fixture metadata instead of downloading model
   weights.
 
@@ -44,7 +44,7 @@ What dry-run does:
 
 - Shows planned folders, commands, consent items, progress, and logs.
 - Lets you step through the setup flow safely.
-- Records what a future live installer would attempt.
+- Records what live installer mode would attempt.
 
 What dry-run does not do:
 
@@ -61,6 +61,6 @@ such as Ollama or LM Studio.
 Use dry-run installer flows when you want to understand the recommended setup
 without changing your machine or downloading large files.
 
-If you expected the app to install a model, install the runtime/model manually in
-the provider for now, then return to Local AI Router and refresh provider health
-or model listings.
+Use **Live install and run** when you want the app to execute the runnable
+macOS Ollama setup. The app runs one command per **Run next step** click, so you
+can stop between package install, provider startup, model pull, and probe steps.

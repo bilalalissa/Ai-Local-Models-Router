@@ -82,6 +82,7 @@ server is available yet.
 The localhost integration API is regular/live behavior: health checks and chat
 requests contact real processes running on your Mac.
 
-The recommended installer flows are dry-run behavior: they show commands and
-folders but do not install runtimes, change package managers, or download model
-weights. See [Regular vs Dry-Run Methods](REGULAR_VS_DRY_RUN.md).
+The recommended installer flows can run in dry-run or live mode. Dry-run shows
+commands and folders without changing the machine. Live mode can install
+Ollama, start it, and pull the recommended model after explicit consent. See
+[Regular vs Dry-Run Methods](REGULAR_VS_DRY_RUN.md).

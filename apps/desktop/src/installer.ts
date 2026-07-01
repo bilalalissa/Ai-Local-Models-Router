@@ -59,21 +59,21 @@ const storageKey = "local-ai-router:stage7-installer-state";
 const root = "~/Library/Application Support/Local AI Router";
 
 const fallbackPlans: InstallPlan[] = [
-  plan("apple-silicon-recommended", "Apple Silicon Recommended Setup", "AppleSilicon", "MLX-LM runtime plus Ollama fallback for Apple Silicon Macs.", "mlx-lm", "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit", [
-    hook("create-runtime-dir", "Create app runtime folder", "ManualStep", "mkdir", ["-p", "{runtime_dir}"]),
-    hook("create-model-dir", "Create app model folder", "ManualStep", "mkdir", ["-p", "{model_dir}"]),
-    hook("venv", "Prepare MLX-LM virtual environment", "ShellCommand", "python3", ["-m", "venv", "{runtime_dir}/mlx-lm-venv"]),
-    hook("install-mlx", "Install MLX-LM package", "ShellCommand", "{runtime_dir}/mlx-lm-venv/bin/pip", ["install", "mlx-lm"]),
-    hook("model-placeholder", "Reserve MLX model download target", "DownloadPlaceholder", "huggingface-cli", ["download", "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit", "--local-dir", "{model_dir}/qwen2.5-coder-mlx"]),
-    hook("probe", "Probe MLX-LM endpoint", "ProviderProbe", "curl", ["http://127.0.0.1:8080/v1/models"])
+  plan("apple-silicon-recommended", "Apple Silicon Recommended Setup", "AppleSilicon", "Ollama runtime plus a balanced local chat model for automatic setup on Apple Silicon Macs.", "ollama", "llama3.1-8b", [
+    hook("create-runtime-dir", "Create app runtime folder", "ShellCommand", "mkdir", ["-p", "{runtime_dir}"], false),
+    hook("create-model-dir", "Create app model folder", "ShellCommand", "mkdir", ["-p", "{model_dir}"], false),
+    hook("install-ollama", "Install Ollama runtime", "ShellCommand", "brew", ["install", "ollama"], false),
+    hook("serve", "Start Ollama service", "ShellCommand", "ollama", ["serve"], false),
+    hook("pull-model", "Pull recommended Ollama model", "DownloadPlaceholder", "ollama", ["pull", "llama3.1:8b"], false),
+    hook("probe", "Probe Ollama tags endpoint", "ProviderProbe", "curl", ["http://127.0.0.1:11434/api/tags"], false)
   ]),
   plan("intel-mac-recommended", "Intel Mac Recommended Setup", "IntelMac", "Ollama with compact GGUF models for Intel Macs.", "ollama", "phi3.5:latest", [
-    hook("create-runtime-dir", "Create app runtime folder", "ManualStep", "mkdir", ["-p", "{runtime_dir}"]),
-    hook("create-model-dir", "Create app model folder", "ManualStep", "mkdir", ["-p", "{model_dir}"]),
-    hook("install-ollama", "Install Ollama runtime", "ShellCommand", "brew", ["install", "ollama"]),
-    hook("serve", "Start Ollama service hook", "ShellCommand", "ollama", ["serve"]),
-    hook("model-placeholder", "Reserve Ollama model pull", "DownloadPlaceholder", "ollama", ["pull", "phi3.5:latest"]),
-    hook("probe", "Probe Ollama tags endpoint", "ProviderProbe", "curl", ["http://127.0.0.1:11434/api/tags"])
+    hook("create-runtime-dir", "Create app runtime folder", "ShellCommand", "mkdir", ["-p", "{runtime_dir}"], false),
+    hook("create-model-dir", "Create app model folder", "ShellCommand", "mkdir", ["-p", "{model_dir}"], false),
+    hook("install-ollama", "Install Ollama runtime", "ShellCommand", "brew", ["install", "ollama"], false),
+    hook("serve", "Start Ollama service", "ShellCommand", "ollama", ["serve"], false),
+    hook("pull-model", "Pull recommended Ollama model", "DownloadPlaceholder", "ollama", ["pull", "phi3.5:latest"], false),
+    hook("probe", "Probe Ollama tags endpoint", "ProviderProbe", "curl", ["http://127.0.0.1:11434/api/tags"], false)
   ]),
   plan("windows-gtx-recommended", "Windows GTX Recommended Setup", "WindowsX64", "llama.cpp server with CUDA-capable GGUF models for Windows x64.", "llama-cpp", "mistral-7b-instruct-q4.gguf", [
     hook("create-runtime-dir", "Create app runtime folder", "ManualStep", "powershell", ["New-Item", "-ItemType", "Directory", "-Force", "{runtime_dir}"]),
@@ -107,17 +107,12 @@ export async function startInstallRun(request: StartInstallRequest): Promise<Ins
       logs: [logEntry("warn", "Install consent is required before preparing commands.")]
     });
   }
-  if (!request.dry_run) throw new Error("Stage 7 only supports dry-run installer execution.");
   return writeState({
     ...stateForPlan(selectedPlan),
     status: "Running",
-    dry_run: true,
+    dry_run: request.dry_run,
     consent_granted: true,
-    logs: [
-      logEntry("info", `Dry-run installer started: ${selectedPlan.name}`),
-      logEntry("info", "No commands will execute and no model weights will download."),
-      logEntry("info", `App-managed folders: ${selectedPlan.runtime_dir} and ${selectedPlan.model_dir}`)
-    ]
+    logs: startLogs(selectedPlan, request.dry_run)
   });
 }
 
@@ -130,6 +125,7 @@ export async function advanceInstallRun(): Promise<InstallRunState> {
   const command = selectedPlan.commands[state.current_step];
   const nextStep = state.current_step + 1;
   const completed = nextStep >= state.total_steps;
+  const modeText = state.dry_run ? "Dry-run checked" : command.dry_run_only ? "Skipped preview-only command" : "Browser preview recorded live command";
   return writeState({
     ...state,
     status: completed ? "Completed" : "Running",
@@ -137,9 +133,9 @@ export async function advanceInstallRun(): Promise<InstallRunState> {
     progress_percent: Math.min(100, Math.floor((nextStep * 100) / state.total_steps)),
     active_command: completed ? null : selectedPlan.commands[nextStep],
     logs: [
-      ...(completed ? [logEntry("info", "Dry-run installer completed.")] : []),
+      ...(completed ? [logEntry("info", state.dry_run ? "Dry-run installer completed." : "Live installer preview completed.")] : []),
       logEntry("debug", `Command hook: ${renderCommand(command)}`),
-      logEntry("info", `Dry-run checked: ${command.label}`),
+      logEntry(state.dry_run || !command.dry_run_only ? "info" : "warn", `${modeText}: ${command.label}`),
       ...state.logs
     ]
   });
@@ -149,21 +145,21 @@ export async function pauseInstallRun(): Promise<InstallRunState> {
   if (isTauriRuntime()) return invoke<InstallRunState>("pause_install_run");
   const state = readState();
   if (state.status !== "Running") throw new Error("only a running installer can be paused");
-  return writeState({ ...state, status: "Paused", logs: [logEntry("info", "Installer dry-run paused."), ...state.logs] });
+  return writeState({ ...state, status: "Paused", logs: [logEntry("info", "Installer paused."), ...state.logs] });
 }
 
 export async function resumeInstallRun(): Promise<InstallRunState> {
   if (isTauriRuntime()) return invoke<InstallRunState>("resume_install_run");
   const state = readState();
   if (state.status !== "Paused") throw new Error("only a paused installer can be resumed");
-  return writeState({ ...state, status: "Running", logs: [logEntry("info", "Installer dry-run resumed."), ...state.logs] });
+  return writeState({ ...state, status: "Running", logs: [logEntry("info", "Installer resumed."), ...state.logs] });
 }
 
 export async function cancelInstallRun(): Promise<InstallRunState> {
   if (isTauriRuntime()) return invoke<InstallRunState>("cancel_install_run");
   const state = readState();
   if (state.status === "Idle" || state.status === "Completed") throw new Error("no active installer run to cancel");
-  return writeState({ ...state, status: "Canceled", active_command: null, logs: [logEntry("warn", "Installer dry-run canceled."), ...state.logs] });
+  return writeState({ ...state, status: "Canceled", active_command: null, logs: [logEntry("warn", "Installer canceled."), ...state.logs] });
 }
 
 export async function subscribeInstallProgress(onChange: (state: InstallRunState) => void): Promise<UnlistenFn> {
@@ -243,19 +239,20 @@ function plan(id: string, name: string, platform: InstallPlatform, summary: stri
     cache_dir: cacheDir,
     commands: commands.map((command) => expandHook(command, runtimeDir, modelDir, cacheDir)),
     consent_items: [
-      "Run in dry-run mode for Stage 7.",
-      "Show command hooks before any future execution.",
-      "Use app-managed runtime and model folders.",
-      "Do not download model weights during tests."
+      "Dry-run mode only previews commands.",
+      "Live mode can run package-manager commands.",
+      "Live mode can start provider server processes.",
+      "Live mode can download model weights.",
+      "Use app-managed runtime and model folders."
     ],
     notes: [
-      "Stage 7 records real command hooks but does not execute them.",
-      "Pause and cancel affect the dry-run workflow state only."
+      "Dry-run is the default and does not execute commands.",
+      "Live mode runs one command per Advance click so you can stop between steps."
     ]
   };
 }
 
-function hook(id: string, label: string, kind: CommandHookKind, program: string, args: string[]): CommandHook {
+function hook(id: string, label: string, kind: CommandHookKind, program: string, args: string[], dryRunOnly = true): CommandHook {
   return {
     id,
     label,
@@ -264,7 +261,7 @@ function hook(id: string, label: string, kind: CommandHookKind, program: string,
     args,
     working_dir: "{runtime_dir}",
     env: [],
-    dry_run_only: true
+    dry_run_only: dryRunOnly
   };
 }
 
@@ -286,6 +283,21 @@ function expand(input: string, runtimeDir: string, modelDir: string, cacheDir: s
 
 function renderCommand(command: CommandHook): string {
   return [command.program, ...command.args].join(" ");
+}
+
+function startLogs(plan: InstallPlan, dryRun: boolean): InstallLogEntry[] {
+  if (dryRun) {
+    return [
+      logEntry("info", `Dry-run installer started: ${plan.name}`),
+      logEntry("info", "No commands will execute and no model weights will download."),
+      logEntry("info", `App-managed folders: ${plan.runtime_dir} and ${plan.model_dir}`)
+    ];
+  }
+  return [
+    logEntry("warn", `Live installer started: ${plan.name}`),
+    logEntry("warn", "Runnable commands may install packages, start providers, and download model weights."),
+    logEntry("info", `App-managed folders: ${plan.runtime_dir} and ${plan.model_dir}`)
+  ];
 }
 
 function logEntry(level: string, message: string): InstallLogEntry {

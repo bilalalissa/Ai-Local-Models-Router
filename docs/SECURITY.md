@@ -40,6 +40,7 @@ credentials are intentionally excluded from the repository.
 
 ## Known Limitations
 
-- Runtime/model installers are dry-run only.
+- Runtime/model installers default to dry-run. Live install mode can run
+  package-manager commands and download model weights after explicit consent.
 - Update metadata uses local fixtures.
 - Remote broker/client flows are trusted-LAN only.

@@ -23,7 +23,8 @@ packaging scripts.
 
 Current limitations:
 
-- Runtime/model installers are dry-run only and do not download model weights.
+- Runtime/model installers support dry-run previews by default. macOS Ollama
+  setup can run live with explicit consent and may download model weights.
 - Update metadata checks use local fixtures.
 - Public releases still require external signing/notarization credentials.
 - Windows MSI/NSIS installers must be built and signed on Windows.
@@ -109,8 +110,9 @@ npm run build:windows
 
 ## What You Need To Set Up Outside The App
 
-Local AI Router does not install real model runtimes yet. Before local routing
-can call real models, install and run one or more providers yourself:
+Local AI Router can install and run the recommended Ollama setup on macOS when
+you choose **Live install and run** in **Models** and approve the consent prompt.
+For other providers, install and run one or more runtimes yourself:
 
 - Ollama.
 - LM Studio.

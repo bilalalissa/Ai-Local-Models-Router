@@ -166,5 +166,6 @@ Expected result: HTTP `200` with an OpenAI-compatible `choices[0].message`.
 Health checks, provider starts, and chat requests are regular/live actions.
 They contact real local processes.
 
-Installer recommendations are dry-run actions. They show what commands would be
-used, but they do not install providers or download model weights.
+Installer recommendations can run in dry-run or live mode. Dry-run shows what
+commands would be used. Live mode can install Ollama, start the provider, and
+download the recommended model after explicit consent.

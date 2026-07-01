@@ -32,8 +32,9 @@ For users, the practical difference is:
 
 - Provider health checks, model listing, and test chat are regular/live actions
   against providers you already run.
-- Recommended setup/install flows are dry-run actions that preview commands and
-  folders without installing runtimes or downloading model weights.
+- Recommended setup/install flows default to dry-run previews. macOS Ollama
+  setup can run live with explicit consent to install the runtime, start it, and
+  pull a model.
 
 Companion apps can connect through the localhost
 [Local Integration API](LOCAL_INTEGRATION_API.md). That API is regular/live for

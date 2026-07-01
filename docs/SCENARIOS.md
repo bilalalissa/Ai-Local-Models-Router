@@ -65,12 +65,14 @@ Common problems and fixes:
 - Connection refused: start the provider and confirm the port.
 - No models listed: install/load a model inside the provider first.
 
-## Use The Dry-Run Recommended Installer
+## Use The Recommended Installer
 
-Goal: preview what a future live setup would do without downloading anything.
+Goal: preview setup commands or run the macOS Ollama setup with explicit
+consent.
 
-Before you start: understand this is dry-run only. For the full distinction,
-read [Regular vs Dry-Run Methods](REGULAR_VS_DRY_RUN.md).
+Before you start: choose **Dry run** for a preview or **Live install and run**
+when you want the desktop app to execute runnable macOS Ollama setup steps. For
+the full distinction, read [Regular vs Dry-Run Methods](REGULAR_VS_DRY_RUN.md).
 
 Steps:
 

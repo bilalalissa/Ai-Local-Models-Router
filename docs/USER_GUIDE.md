@@ -56,8 +56,8 @@ Expected result: the model table explains why each model fits or does not fit.
 | 3 | Model listing and test chat verify provider connectivity. |
 | 4 | Provider logs show recent checks and actions. |
 
-1. Install and start a provider outside the app: Ollama, LM Studio, MLX-LM, or
-   an OpenAI-compatible local server.
+1. Install and start a provider outside the app, or use **Models** >
+   **Live install and run** for the recommended macOS Ollama setup.
 2. Open **Providers**.
 3. Refresh health.
 4. Update base URLs if your provider does not use the default local port.
@@ -96,7 +96,7 @@ is running yet. See the
 [Learning Boost Operator Guide](LEARNING_BOOST_OPERATOR_GUIDE.md) and
 [Local Integration API](LOCAL_INTEGRATION_API.md).
 
-## Use The Dry-Run Installer
+## Install And Run A Recommended Setup
 
 ![Models installer flow](assets/screenshots/models-installer.png)
 
@@ -104,23 +104,29 @@ is running yet. See the
 | --- | --- |
 | 1 | Setup plan selector chooses Apple Silicon, Intel Mac, or Windows plan. |
 | 2 | Folder rows show where future runtime/model/cache files would live. |
-| 3 | Consent checkbox is required before dry-run execution. |
-| 4 | Command details show exactly what would run in a future live installer. |
+| 3 | Mode buttons choose Dry run or Live install and run. |
+| 4 | Command details show which steps are runnable and which are preview-only. |
 
 1. Open **Models**.
 2. Choose a recommended setup plan.
 3. Read the runtime, model, and cache folders.
-4. Confirm the dry-run consent checkbox.
-5. Click **Install recommended setup**.
-6. Use **Advance dry run** to step through the command plan.
+4. Choose **Dry run** to preview commands, or **Live install and run** to let the
+   desktop app execute runnable setup steps.
+5. Confirm the consent checkbox.
+6. Click **Preview recommended setup** or **Start live install**.
+7. Use **Advance dry run** or **Run next step** to move one command at a time.
 
-Expected result: commands and logs are shown, but no runtime or model weights
-are downloaded.
+Expected result: dry-run mode only shows commands and logs. Live mode can
+install Ollama, start the Ollama service, pull the recommended model, and probe
+the provider endpoint on macOS.
 
 Dry-run means the app previews the setup plan without changing package managers,
 installing runtimes, or downloading model weights. Regular/live provider checks
 are different: they contact providers you already installed and started outside
 the app.
+
+Live install and run is different from dry-run: it can change your machine and
+download large model files after you approve the consent checkbox.
 
 ## Route A Test Prompt
 
@@ -208,4 +214,5 @@ the selected broker pause policy.
   Windows broker URL.
 - Remote route unavailable: refresh remotes, verify the broker token was not
   revoked, and check pause mode.
-- App cannot install a model: Stage 14 installer flows are dry-run only.
+- Live install fails: read the install log, confirm Homebrew is installed, and
+  rerun the failed step after fixing the command error.

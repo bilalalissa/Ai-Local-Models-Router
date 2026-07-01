@@ -2828,6 +2828,7 @@ function InstallerPage() {
   const [state, setState] = useState<InstallRunState | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [consentGranted, setConsentGranted] = useState(false);
+  const [installMode, setInstallMode] = useState<"dry" | "live">("dry");
   const [statusMessage, setStatusMessage] = useState("Loading install plans...");
   const [error, setError] = useState<string | null>(null);
 
@@ -2887,12 +2888,16 @@ function InstallerPage() {
       () =>
         startInstallRun({
           plan_id: selectedPlan.id,
-          dry_run: true,
+          dry_run: installMode === "dry",
           consent_granted: consentGranted
         }),
-      consentGranted ? "Dry-run installer started." : "Consent required before install dry run."
+      consentGranted
+        ? installMode === "dry"
+          ? "Dry-run installer started."
+          : "Live installer started."
+        : "Consent required before install."
     );
-  }, [consentGranted, runAction, selectedPlan]);
+  }, [consentGranted, installMode, runAction, selectedPlan]);
 
   if (!selectedPlan || !state) {
     return (
@@ -2929,6 +2934,7 @@ function InstallerPage() {
             onChange={(event) => {
               setSelectedPlanId(event.target.value);
               setConsentGranted(false);
+              setInstallMode("dry");
               setStatusMessage("Install plan selected.");
             }}
             value={selectedPlanId}
@@ -2952,10 +2958,30 @@ function InstallerPage() {
               ["Runtime Folder", selectedPlan.runtime_dir],
               ["Model Folder", selectedPlan.model_dir],
               ["Cache Folder", selectedPlan.cache_dir],
-              ["Dry Run", "Required in Stage 7"]
+              ["Mode", installMode === "dry" ? "Dry run preview" : "Live install and run"]
             ]}
           />
           <p className="fine-print">{selectedPlan.summary}</p>
+          <div className="install-mode-grid" role="radiogroup" aria-label="Install mode">
+            <button
+              className={installMode === "dry" ? "mode-card active" : "mode-card"}
+              disabled={isRunning || isPaused}
+              onClick={() => setInstallMode("dry")}
+              type="button"
+            >
+              <FileText size={20} />
+              <span>Dry run</span>
+            </button>
+            <button
+              className={installMode === "live" ? "mode-card active" : "mode-card"}
+              disabled={isRunning || isPaused}
+              onClick={() => setInstallMode("live")}
+              type="button"
+            >
+              <TerminalSquare size={20} />
+              <span>Live install and run</span>
+            </button>
+          </div>
           <div className="consent-box">
             <strong>Consent</strong>
             {selectedPlan.consent_items.map((item) => (
@@ -2967,27 +2993,34 @@ function InstallerPage() {
                 onChange={(event) => setConsentGranted(event.target.checked)}
                 type="checkbox"
               />
-              I understand this is a dry run and no commands will execute.
+              {installMode === "dry"
+                ? "I understand this is a dry run and no commands will execute."
+                : "I approve live installation, provider startup, and model downloads for this plan."}
             </label>
           </div>
           <div className="provider-actions">
             <button className="secondary-button" disabled={isRunning} onClick={handleStart} type="button">
               <Download size={16} />
-              Install recommended setup
+              {installMode === "dry" ? "Preview recommended setup" : "Start live install"}
             </button>
             <button
               className="secondary-button"
               disabled={!isRunning}
-              onClick={() => runAction(advanceInstallRun, "Dry-run advanced one step.")}
+              onClick={() =>
+                runAction(
+                  advanceInstallRun,
+                  state.dry_run ? "Dry-run advanced one step." : "Live install advanced one step."
+                )
+              }
               type="button"
             >
               <Play size={16} />
-              Advance dry run
+              {state.dry_run ? "Advance dry run" : "Run next step"}
             </button>
             <button
               className="secondary-button"
               disabled={!isRunning}
-              onClick={() => runAction(pauseInstallRun, "Installer dry-run paused.")}
+              onClick={() => runAction(pauseInstallRun, "Installer paused.")}
               type="button"
             >
               <Pause size={16} />
@@ -2996,7 +3029,7 @@ function InstallerPage() {
             <button
               className="resume-button"
               disabled={!isPaused}
-              onClick={() => runAction(resumeInstallRun, "Installer dry-run resumed.")}
+              onClick={() => runAction(resumeInstallRun, "Installer resumed.")}
               type="button"
             >
               <Play size={16} />
@@ -3005,7 +3038,7 @@ function InstallerPage() {
             <button
               className="secondary-button"
               disabled={!["Running", "Paused", "NeedsConsent"].includes(state.status)}
-              onClick={() => runAction(cancelInstallRun, "Installer dry-run canceled.")}
+              onClick={() => runAction(cancelInstallRun, "Installer canceled.")}
               type="button"
             >
               Cancel
@@ -3043,7 +3076,9 @@ function InstallerPage() {
                   <strong>{command.label}</strong>
                   <code>{renderInstallCommand(command)}</code>
                 </div>
-                <span className="fit-pill tight">{command.kind}</span>
+                <span className={`fit-pill ${command.dry_run_only ? "tight" : "smooth"}`}>
+                  {command.dry_run_only ? "Preview only" : "Runnable"}
+                </span>
               </div>
             ))}
           </div>

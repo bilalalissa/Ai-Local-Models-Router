@@ -73,6 +73,6 @@ Unsigned artifacts are suitable for local verification only.
 Packaging commands are regular build commands: they compile the app and create
 local app/installer artifacts.
 
-The in-app **Models** installer flow is different. It is dry-run only: it shows
-runtime/model setup commands and folders but does not execute those commands or
-download model weights.
+The in-app **Models** installer flow is separate from packaging. It defaults to
+dry-run previews. Live install mode can execute runnable macOS Ollama setup
+steps after explicit consent.

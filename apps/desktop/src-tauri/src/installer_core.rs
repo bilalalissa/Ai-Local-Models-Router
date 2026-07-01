@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
+    time::Duration,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -129,13 +132,10 @@ impl InstallerManager {
             };
             return Ok(self.state());
         }
-        if !request.dry_run {
-            return Err("Stage 7 only supports dry-run installer execution.".to_string());
-        }
         self.state = InstallRunState {
             status: InstallRunStatus::Running,
             selected_plan_id: Some(plan.id.clone()),
-            dry_run: true,
+            dry_run: request.dry_run,
             consent_granted: true,
             current_step: 0,
             total_steps: plan.commands.len(),
@@ -143,20 +143,7 @@ impl InstallerManager {
             runtime_dir: plan.runtime_dir.clone(),
             model_dir: plan.model_dir.clone(),
             active_command: plan.commands.first().cloned(),
-            logs: vec![
-                log("info", &format!("Dry-run installer started: {}", plan.name)),
-                log(
-                    "info",
-                    "No commands will execute and no model weights will download.",
-                ),
-                log(
-                    "info",
-                    &format!(
-                        "App-managed folders: {} and {}",
-                        plan.runtime_dir, plan.model_dir
-                    ),
-                ),
-            ],
+            logs: start_logs(&plan, request.dry_run),
         };
         Ok(self.state())
     }
@@ -180,23 +167,62 @@ impl InstallerManager {
             self.state.status = InstallRunStatus::Completed;
             self.state.progress_percent = 100;
             self.state.active_command = None;
-            self.push_log("info", "Dry-run installer completed.");
+            self.push_log(
+                "info",
+                if self.state.dry_run {
+                    "Dry-run installer completed."
+                } else {
+                    "Live installer completed."
+                },
+            );
             return Ok(self.state());
         }
 
         let command = plan.commands[self.state.current_step].clone();
-        self.push_log("info", &format!("Dry-run checked: {}", command.label));
-        self.push_log(
-            "debug",
-            &format!("Command hook: {}", render_command(&command)),
-        );
+        if self.state.dry_run {
+            self.push_log("info", &format!("Dry-run checked: {}", command.label));
+            self.push_log(
+                "debug",
+                &format!("Command hook: {}", render_command(&command)),
+            );
+        } else if command.dry_run_only {
+            self.push_log(
+                "warn",
+                &format!("Skipped preview-only command: {}", command.label),
+            );
+            self.push_log(
+                "debug",
+                &format!("Preview-only hook: {}", render_command(&command)),
+            );
+        } else if let Err(err) = execute_command_hook(&command) {
+            self.state.status = InstallRunStatus::Error;
+            self.state.active_command = Some(command.clone());
+            self.push_log(
+                "error",
+                &format!("Live install command failed: {}: {err}", command.label),
+            );
+            return Err(format!("{} failed: {err}", command.label));
+        } else {
+            self.push_log("info", &format!("Executed: {}", command.label));
+            self.push_log(
+                "debug",
+                &format!("Command hook: {}", render_command(&command)),
+            );
+        }
         self.state.current_step += 1;
         self.state.progress_percent = progress(self.state.current_step, self.state.total_steps);
         self.state.active_command = plan.commands.get(self.state.current_step).cloned();
         if self.state.current_step >= self.state.total_steps {
             self.state.status = InstallRunStatus::Completed;
             self.state.active_command = None;
-            self.push_log("info", "Dry-run installer completed.");
+            self.push_log(
+                "info",
+                if self.state.dry_run {
+                    "Dry-run installer completed."
+                } else {
+                    "Live installer completed."
+                },
+            );
         }
         Ok(self.state())
     }
@@ -206,7 +232,7 @@ impl InstallerManager {
             return Err("only a running installer can be paused".to_string());
         }
         self.state.status = InstallRunStatus::Paused;
-        self.push_log("info", "Installer dry-run paused.");
+        self.push_log("info", "Installer paused.");
         Ok(self.state())
     }
 
@@ -215,7 +241,7 @@ impl InstallerManager {
             return Err("only a paused installer can be resumed".to_string());
         }
         self.state.status = InstallRunStatus::Running;
-        self.push_log("info", "Installer dry-run resumed.");
+        self.push_log("info", "Installer resumed.");
         Ok(self.state())
     }
 
@@ -228,7 +254,7 @@ impl InstallerManager {
         }
         self.state.status = InstallRunStatus::Canceled;
         self.state.active_command = None;
-        self.push_log("warn", "Installer dry-run canceled.");
+        self.push_log("warn", "Installer canceled.");
         Ok(self.state())
     }
 
@@ -251,56 +277,57 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
             "apple-silicon-recommended",
             "Apple Silicon Recommended Setup",
             InstallPlatform::AppleSilicon,
-            "MLX-LM runtime plus Ollama fallback for Apple Silicon Macs.",
-            "mlx-lm",
-            "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
+            "Ollama runtime plus a balanced local chat model for automatic setup on Apple Silicon Macs.",
+            "ollama",
+            "llama3.1-8b",
             vec![
                 hook(
                     "create-runtime-dir",
                     "Create app runtime folder",
-                    CommandHookKind::ManualStep,
+                    CommandHookKind::ShellCommand,
                     "mkdir",
                     &["-p", "{runtime_dir}"],
+                    false,
                 ),
                 hook(
                     "create-model-dir",
                     "Create app model folder",
-                    CommandHookKind::ManualStep,
+                    CommandHookKind::ShellCommand,
                     "mkdir",
                     &["-p", "{model_dir}"],
+                    false,
                 ),
                 hook(
-                    "venv",
-                    "Prepare MLX-LM virtual environment",
+                    "install-ollama",
+                    "Install Ollama runtime",
                     CommandHookKind::ShellCommand,
-                    "python3",
-                    &["-m", "venv", "{runtime_dir}/mlx-lm-venv"],
+                    "brew",
+                    &["install", "ollama"],
+                    false,
                 ),
                 hook(
-                    "install-mlx",
-                    "Install MLX-LM package",
+                    "serve",
+                    "Start Ollama service",
                     CommandHookKind::ShellCommand,
-                    "{runtime_dir}/mlx-lm-venv/bin/pip",
-                    &["install", "mlx-lm"],
+                    "ollama",
+                    &["serve"],
+                    false,
                 ),
                 hook(
-                    "model-placeholder",
-                    "Reserve MLX model download target",
+                    "pull-model",
+                    "Pull recommended Ollama model",
                     CommandHookKind::DownloadPlaceholder,
-                    "huggingface-cli",
-                    &[
-                        "download",
-                        "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
-                        "--local-dir",
-                        "{model_dir}/qwen2.5-coder-mlx",
-                    ],
+                    "ollama",
+                    &["pull", "llama3.1:8b"],
+                    false,
                 ),
                 hook(
                     "probe",
-                    "Probe MLX-LM endpoint",
+                    "Probe Ollama tags endpoint",
                     CommandHookKind::ProviderProbe,
                     "curl",
-                    &["http://127.0.0.1:8080/v1/models"],
+                    &["http://127.0.0.1:11434/api/tags"],
+                    false,
                 ),
             ],
         ),
@@ -316,16 +343,18 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                 hook(
                     "create-runtime-dir",
                     "Create app runtime folder",
-                    CommandHookKind::ManualStep,
+                    CommandHookKind::ShellCommand,
                     "mkdir",
                     &["-p", "{runtime_dir}"],
+                    false,
                 ),
                 hook(
                     "create-model-dir",
                     "Create app model folder",
-                    CommandHookKind::ManualStep,
+                    CommandHookKind::ShellCommand,
                     "mkdir",
                     &["-p", "{model_dir}"],
+                    false,
                 ),
                 hook(
                     "install-ollama",
@@ -333,20 +362,23 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                     CommandHookKind::ShellCommand,
                     "brew",
                     &["install", "ollama"],
+                    false,
                 ),
                 hook(
                     "serve",
-                    "Start Ollama service hook",
+                    "Start Ollama service",
                     CommandHookKind::ShellCommand,
                     "ollama",
                     &["serve"],
+                    false,
                 ),
                 hook(
-                    "model-placeholder",
-                    "Reserve Ollama model pull",
+                    "pull-model",
+                    "Pull recommended Ollama model",
                     CommandHookKind::DownloadPlaceholder,
                     "ollama",
                     &["pull", "phi3.5:latest"],
+                    false,
                 ),
                 hook(
                     "probe",
@@ -354,6 +386,7 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                     CommandHookKind::ProviderProbe,
                     "curl",
                     &["http://127.0.0.1:11434/api/tags"],
+                    false,
                 ),
             ],
         ),
@@ -378,6 +411,7 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                         "-Force",
                         "{runtime_dir}",
                     ],
+                    true,
                 ),
                 hook(
                     "create-model-dir",
@@ -391,6 +425,7 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                         "-Force",
                         "{model_dir}",
                     ],
+                    true,
                 ),
                 hook(
                     "download-runtime",
@@ -402,6 +437,7 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                         "-OutFile",
                         "{runtime_dir}\\llama.cpp.zip",
                     ],
+                    true,
                 ),
                 hook(
                     "model-placeholder",
@@ -413,6 +449,7 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                         "-OutFile",
                         "{model_dir}\\mistral-7b-instruct-q4.gguf",
                     ],
+                    true,
                 ),
                 hook(
                     "server",
@@ -427,6 +464,7 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                         "--port",
                         "8081",
                     ],
+                    true,
                 ),
                 hook(
                     "probe",
@@ -434,6 +472,7 @@ fn install_plans(app_data_dir: &Path) -> Vec<InstallPlan> {
                     CommandHookKind::ProviderProbe,
                     "curl",
                     &["http://127.0.0.1:8081/v1/models"],
+                    true,
                 ),
             ],
         ),
@@ -471,19 +510,28 @@ fn plan(
         cache_dir: cache_text,
         commands,
         consent_items: vec![
-            "Run in dry-run mode for Stage 7.".to_string(),
-            "Show command hooks before any future execution.".to_string(),
+            "Dry-run mode only previews commands.".to_string(),
+            "Live mode can run package-manager commands.".to_string(),
+            "Live mode can start provider server processes.".to_string(),
+            "Live mode can download model weights.".to_string(),
             "Use app-managed runtime and model folders.".to_string(),
-            "Do not download model weights during tests.".to_string(),
         ],
         notes: vec![
-            "Stage 7 records real command hooks but does not execute them.".to_string(),
-            "Pause and cancel affect the dry-run workflow state only.".to_string(),
+            "Dry-run is the default and does not execute commands.".to_string(),
+            "Live mode runs one command per Advance click so you can stop between steps."
+                .to_string(),
         ],
     }
 }
 
-fn hook(id: &str, label: &str, kind: CommandHookKind, program: &str, args: &[&str]) -> CommandHook {
+fn hook(
+    id: &str,
+    label: &str,
+    kind: CommandHookKind,
+    program: &str,
+    args: &[&str],
+    dry_run_only: bool,
+) -> CommandHook {
     CommandHook {
         id: id.to_string(),
         label: label.to_string(),
@@ -492,7 +540,7 @@ fn hook(id: &str, label: &str, kind: CommandHookKind, program: &str, args: &[&st
         args: args.iter().map(|arg| (*arg).to_string()).collect(),
         working_dir: "{runtime_dir}".to_string(),
         env: Vec::new(),
-        dry_run_only: true,
+        dry_run_only,
     }
 }
 
@@ -524,6 +572,75 @@ fn render_command(command: &CommandHook) -> String {
         .chain(command.args.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn start_logs(plan: &InstallPlan, dry_run: bool) -> Vec<InstallLogEntry> {
+    if dry_run {
+        return vec![
+            log("info", &format!("Dry-run installer started: {}", plan.name)),
+            log(
+                "info",
+                "No commands will execute and no model weights will download.",
+            ),
+            log(
+                "info",
+                &format!(
+                    "App-managed folders: {} and {}",
+                    plan.runtime_dir, plan.model_dir
+                ),
+            ),
+        ];
+    }
+
+    vec![
+        log("warn", &format!("Live installer started: {}", plan.name)),
+        log(
+            "warn",
+            "Runnable commands may install packages, start providers, and download model weights.",
+        ),
+        log(
+            "info",
+            &format!(
+                "App-managed folders: {} and {}",
+                plan.runtime_dir, plan.model_dir
+            ),
+        ),
+    ]
+}
+
+fn execute_command_hook(command: &CommandHook) -> Result<(), String> {
+    if matches!(command.id.as_str(), "serve" | "server") {
+        Command::new(&command.program)
+            .args(&command.args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| {
+                thread::sleep(Duration::from_millis(750));
+            })
+            .map_err(|err| format!("{}: {err}", command.program))?;
+        return Ok(());
+    }
+
+    let output = Command::new(&command.program)
+        .args(&command.args)
+        .output()
+        .map_err(|err| format!("{}: {err}", command.program))?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if !stderr.trim().is_empty() {
+        stderr.trim()
+    } else if !stdout.trim().is_empty() {
+        stdout.trim()
+    } else {
+        "command exited with non-zero status"
+    };
+    Err(detail.to_string())
 }
 
 fn idle_state(app_data_dir: &Path) -> InstallRunState {
@@ -598,7 +715,15 @@ mod tests {
         assert!(plans.iter().all(|plan| plan.model_dir.contains("models")));
         assert!(plans
             .iter()
-            .all(|plan| plan.commands.iter().all(|command| command.dry_run_only)));
+            .filter(|plan| plan.platform != InstallPlatform::WindowsX64)
+            .any(|plan| plan.commands.iter().any(|command| !command.dry_run_only)));
+        assert!(plans
+            .iter()
+            .find(|plan| plan.platform == InstallPlatform::WindowsX64)
+            .expect("windows plan exists")
+            .commands
+            .iter()
+            .all(|command| command.dry_run_only));
     }
 
     #[test]
@@ -637,6 +762,25 @@ mod tests {
             .logs
             .iter()
             .any(|entry| entry.message.contains("Dry-run checked")));
+    }
+
+    #[test]
+    fn live_install_can_execute_runnable_setup_steps() {
+        let mut manager = manager();
+        manager
+            .start(StartInstallRequest {
+                plan_id: "intel-mac-recommended".to_string(),
+                dry_run: false,
+                consent_granted: true,
+            })
+            .expect("live run starts");
+        let state = manager.advance().expect("mkdir step succeeds");
+
+        assert!(!state.dry_run);
+        assert_eq!(state.current_step, 1);
+        assert!(state.logs.iter().any(|entry| entry
+            .message
+            .contains("Executed: Create app runtime folder")));
     }
 
     #[test]
