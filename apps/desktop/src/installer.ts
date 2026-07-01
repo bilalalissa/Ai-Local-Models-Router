@@ -141,6 +141,19 @@ export async function advanceInstallRun(): Promise<InstallRunState> {
   });
 }
 
+export async function autoInstallAndRun(request: StartInstallRequest): Promise<InstallRunState> {
+  let state = await startInstallRun({ ...request, dry_run: false, consent_granted: true });
+  let stepCount = 0;
+  while (state.status === "Running") {
+    state = await advanceInstallRun();
+    stepCount += 1;
+    if (stepCount > 100) {
+      throw new Error("automatic installer exceeded its step limit");
+    }
+  }
+  return state;
+}
+
 export async function pauseInstallRun(): Promise<InstallRunState> {
   if (isTauriRuntime()) return invoke<InstallRunState>("pause_install_run");
   const state = readState();

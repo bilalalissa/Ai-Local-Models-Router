@@ -10,6 +10,7 @@ use std::{
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(900);
+const CHAT_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ProviderHealth {
@@ -136,6 +137,7 @@ pub trait ProviderAdapter {
     fn settings(&self) -> ProviderSettings;
     fn update_settings(&mut self, patch: ProviderSettingsPatch) -> ProviderStatus;
     fn install_plan(&self) -> ProviderInstallPlan;
+    fn select_model(&mut self, requested_model_id: &str) -> Result<ProviderStatus, String>;
 }
 
 #[derive(Debug)]
@@ -253,6 +255,15 @@ impl ProviderManager {
     pub fn chat(&mut self, request: ProviderChatRequest) -> Result<ProviderChatResponse, String> {
         self.provider_mut(&request.provider_id)
             .and_then(|provider| provider.chat(request))
+    }
+
+    pub fn select_model(
+        &mut self,
+        provider_id: &str,
+        requested_model_id: &str,
+    ) -> Result<ProviderStatus, String> {
+        self.provider_mut(provider_id)
+            .and_then(|provider| provider.select_model(requested_model_id))
     }
 
     pub fn logs(&self, provider_id: Option<&str>) -> Vec<ProviderLogEntry> {
@@ -390,6 +401,12 @@ impl ProviderAdapter for ProviderInstance {
             Self::LocalHttp(provider) => provider.install_plan(),
         }
     }
+
+    fn select_model(&mut self, requested_model_id: &str) -> Result<ProviderStatus, String> {
+        match self {
+            Self::LocalHttp(provider) => provider.select_model(requested_model_id),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -420,14 +437,28 @@ impl LocalHttpProvider {
             running: self.last_running,
             paused: self.paused,
             model_count: self.last_models.len(),
-            active_model: self
-                .last_models
-                .first()
-                .map(|model| model.display_name.clone()),
+            active_model: self.active_model_id(),
             latency_ms: self.last_latency_ms,
             last_checked_ms: now_ms(),
             message: message.to_string(),
         }
+    }
+
+    fn active_model_id(&self) -> Option<String> {
+        self.default_model_id
+            .as_ref()
+            .and_then(|default| {
+                self.last_models
+                    .iter()
+                    .find(|model| model.supports_chat && model.id == *default)
+                    .map(|model| model.id.clone())
+            })
+            .or_else(|| {
+                self.last_models
+                    .iter()
+                    .find(|model| model.supports_chat)
+                    .map(|model| model.id.clone())
+            })
     }
 
     fn apply_probe_result(
@@ -490,9 +521,36 @@ impl LocalHttpProvider {
     }
 
     fn selected_model_id(&mut self, request: &ProviderChatRequest) -> String {
-        request
-            .model_id
-            .clone()
+        if let Some(requested) = request.model_id.as_deref() {
+            if requested != "local-model" {
+                if let Some(model_id) =
+                    resolve_provider_model_id(&self.protocol, requested, &self.last_models)
+                {
+                    if model_id != requested {
+                        self.push_log(
+                            "info",
+                            &format!(
+                                "Mapped requested model {requested} to provider model {model_id}."
+                            ),
+                        );
+                    }
+                    return model_id;
+                }
+                self.push_log(
+                    "warn",
+                    &format!(
+                        "Requested model {requested} is not installed for {}; using the active provider model.",
+                        self.definition.name
+                    ),
+                );
+            }
+        }
+
+        self.default_model_id
+            .as_deref()
+            .and_then(|default| {
+                resolve_provider_model_id(&self.protocol, default, &self.last_models)
+            })
             .or_else(|| {
                 self.last_models
                     .iter()
@@ -603,7 +661,13 @@ impl ProviderAdapter for LocalHttpProvider {
             ProviderProtocol::Ollama => "/api/generate",
             ProviderProtocol::OpenAiCompatible => "/chat/completions",
         };
-        let response = local_http_request(&self.settings.base_url, "POST", path, Some(body))?;
+        let response = local_http_request_with_timeout(
+            &self.settings.base_url,
+            "POST",
+            path,
+            Some(body),
+            CHAT_REQUEST_TIMEOUT,
+        )?;
         if response.status_code >= 400 {
             self.push_log(
                 "warn",
@@ -737,6 +801,33 @@ impl ProviderAdapter for LocalHttpProvider {
 
     fn install_plan(&self) -> ProviderInstallPlan {
         install_plan_for(&self.definition, &self.settings)
+    }
+
+    fn select_model(&mut self, requested_model_id: &str) -> Result<ProviderStatus, String> {
+        if !self.settings.enabled {
+            self.settings.enabled = true;
+        }
+        if self.paused {
+            return Err("provider tasks are paused".to_string());
+        }
+        let models = self.list_models()?;
+        let Some(model_id) = resolve_provider_model_id(&self.protocol, requested_model_id, &models)
+        else {
+            self.push_log(
+                "warn",
+                &format!("Model switch rejected; {requested_model_id} is not installed."),
+            );
+            return Err(format!(
+                "requested model is not installed for {}: {requested_model_id}",
+                self.definition.name
+            ));
+        };
+        self.default_model_id = Some(model_id.clone());
+        self.push_log(
+            "info",
+            &format!("Selected provider runtime model {model_id}."),
+        );
+        Ok(self.status("Provider runtime model selected."))
     }
 }
 
@@ -977,6 +1068,57 @@ fn parse_openai_models(body: &str) -> Result<Vec<ProviderModel>, String> {
         .collect())
 }
 
+fn resolve_provider_model_id(
+    protocol: &ProviderProtocol,
+    requested: &str,
+    models: &[ProviderModel],
+) -> Option<String> {
+    if models
+        .iter()
+        .any(|model| model.id == requested && model.supports_chat)
+    {
+        return Some(requested.to_string());
+    }
+
+    let aliases = match protocol {
+        ProviderProtocol::Ollama => ollama_model_aliases(requested),
+        ProviderProtocol::OpenAiCompatible => &[][..],
+    };
+    for alias in aliases {
+        if models
+            .iter()
+            .any(|model| model.id == *alias && model.supports_chat)
+        {
+            return Some((*alias).to_string());
+        }
+    }
+
+    let normalized_requested = normalize_model_name(requested);
+    models
+        .iter()
+        .find(|model| {
+            model.supports_chat && normalize_model_name(&model.id).contains(&normalized_requested)
+        })
+        .map(|model| model.id.clone())
+}
+
+fn ollama_model_aliases(requested: &str) -> &'static [&'static str] {
+    match requested {
+        "llama-3-1-8b-q4" => &["llama3.1:8b", "llama3.1", "llama3:8b"],
+        "qwen2-5-coder-7b-q4" => &["qwen2.5-coder:7b", "qwen2.5:7b"],
+        "phi-3-5-mini-q4" => &["phi3.5:latest", "phi3.5", "phi3:mini"],
+        _ => &[],
+    }
+}
+
+fn normalize_model_name(input: &str) -> String {
+    input
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 fn parse_ollama_chat(body: &str) -> Result<String, String> {
     let value: Value =
         serde_json::from_str(body).map_err(|err| format!("invalid Ollama chat JSON: {err}"))?;
@@ -1009,6 +1151,16 @@ fn local_http_request(
     path: &str,
     body: Option<Value>,
 ) -> Result<HttpResponse, String> {
+    local_http_request_with_timeout(base_url, method, path, body, REQUEST_TIMEOUT)
+}
+
+fn local_http_request_with_timeout(
+    base_url: &str,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+    timeout: Duration,
+) -> Result<HttpResponse, String> {
     let url = parse_http_url(base_url)?;
     let request_path = join_paths(&url.prefix, path);
     let body_text = body.map(|value| value.to_string()).unwrap_or_default();
@@ -1019,13 +1171,13 @@ fn local_http_request(
         .next()
         .ok_or_else(|| format!("no socket address for {}:{}", url.host, url.port))?;
     let start = Instant::now();
-    let mut stream = TcpStream::connect_timeout(&addr, REQUEST_TIMEOUT)
+    let mut stream = TcpStream::connect_timeout(&addr, timeout)
         .map_err(|err| format!("connect failed: {err}"))?;
     stream
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .set_read_timeout(Some(timeout))
         .map_err(|err| format!("read timeout setup failed: {err}"))?;
     stream
-        .set_write_timeout(Some(REQUEST_TIMEOUT))
+        .set_write_timeout(Some(timeout))
         .map_err(|err| format!("write timeout setup failed: {err}"))?;
     let request = format!(
         "{method} {request_path} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1167,6 +1319,23 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].display_name, "local-chat");
         assert!(!models[1].supports_chat);
+    }
+
+    #[test]
+    fn maps_catalog_model_ids_to_ollama_runtime_models() {
+        let models = parse_ollama_models(
+            r#"{"models":[{"name":"llama3.1:8b","size":5368709120,"details":{"family":"llama","quantization_level":"Q4_K_M"}},{"name":"qwen2.5:7b","size":4683087332,"details":{"family":"qwen2","quantization_level":"Q4_K_M"}}]}"#,
+        )
+        .expect("ollama models parse");
+
+        assert_eq!(
+            resolve_provider_model_id(&ProviderProtocol::Ollama, "llama-3-1-8b-q4", &models),
+            Some("llama3.1:8b".to_string())
+        );
+        assert_eq!(
+            resolve_provider_model_id(&ProviderProtocol::Ollama, "qwen2-5-coder-7b-q4", &models),
+            Some("qwen2.5:7b".to_string())
+        );
     }
 
     #[test]

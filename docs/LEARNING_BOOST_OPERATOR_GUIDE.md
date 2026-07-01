@@ -33,8 +33,14 @@ LOCAL_AI_ROUTER_AUTOSTART=true
 LOCAL_AI_ROUTER_BASE_URL=http://127.0.0.1:17640
 LOCAL_AI_ROUTER_AUTO_APPLY=true
 LOCAL_AI_ROUTER_AUTO_START_PROVIDER=true
-LOCAL_AI_ROUTER_AUTO_INSTALL=false
+LOCAL_AI_ROUTER_AUTO_INSTALL=true
 ```
+
+`LOCAL_AI_ROUTER_AUTO_INSTALL=true` lets Learning Boost ask the router for an
+install-capable recommendation. Local AI Router still requires user consent in
+the desktop app before it runs package-manager commands or downloads model
+weights. To run the setup, open **Models**, choose **Live install and run**,
+check the consent box, then click **Auto install and run**.
 
 If you launch Local AI Router from a development binary, also set:
 
@@ -83,10 +89,69 @@ curl -X POST http://127.0.0.1:17640/api/integration/recommend \
 
 Expected result: all three commands return HTTP `200`.
 
+## Select A Model For A Workflow
+
+Learning Boost can ask Local AI Router to select the best currently available
+runtime model before a workflow starts. The app then keeps using
+`model: local-model`; Local AI Router maps that alias to the selected runtime
+model.
+
+Quick chat:
+
+```bash
+curl -X POST http://127.0.0.1:17640/api/integration/select-model \
+  -H 'content-type: application/json' \
+  --data '{
+    "task": "quick_chat",
+    "needs": ["low_latency"],
+    "prefer_local": true
+  }'
+```
+
+Source ingest or transcript summarization:
+
+```bash
+curl -X POST http://127.0.0.1:17640/api/integration/select-model \
+  -H 'content-type: application/json' \
+  --data '{
+    "task": "summarize_sources",
+    "context_size": "large",
+    "needs": ["summarization"],
+    "prefer_local": true
+  }'
+```
+
+Arabic planning or reasoning:
+
+```bash
+curl -X POST http://127.0.0.1:17640/api/integration/select-model \
+  -H 'content-type: application/json' \
+  --data '{
+    "task": "plan_drafting",
+    "needs": ["arabic", "reasoning"],
+    "prefer_local": true
+  }'
+```
+
+Explicit model override:
+
+```bash
+curl -X POST http://127.0.0.1:17640/api/integration/select-model \
+  -H 'content-type: application/json' \
+  --data '{"model":"llama-3-1-8b-q4"}'
+```
+
+Expected result: HTTP `200` with `provider_id`, `runtime_model`, and
+`chat_model: "local-model"`. If the preferred task model is not installed, the
+router falls back to the first available chat model from a reachable provider.
+The equivalent endpoint `/api/integration/select-runtime` is also available.
+
 ## Start A Model Provider
 
 If chat returns `no_local_provider`, Local AI Router is reachable but no model
-server is answering yet.
+server is answering yet. You can let Local AI Router handle the supported macOS
+Ollama setup from **Models > Live install and run > Auto install and run**, or
+start a provider manually.
 
 Choose one provider:
 

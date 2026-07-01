@@ -17,14 +17,15 @@ requests to either local models or a paired Windows broker machine.
 ## Current Status
 
 The app is functional as a local-first desktop shell with hardware detection,
-model scoring, provider checks, dry-run installers, router decisions, remote
-broker/client pairing, pause mode, update metadata fixtures, and macOS/Windows
-packaging scripts.
+model scoring, provider checks, dry-run installers, automatic macOS Ollama
+install-and-run with consent, router decisions, remote broker/client pairing,
+pause mode, update metadata fixtures, and macOS/Windows packaging scripts.
 
 Current limitations:
 
-- Runtime/model installers support dry-run previews by default. macOS Ollama
-  setup can run live with explicit consent and may download model weights.
+- Runtime/model installers support dry-run previews by default. Supported macOS
+  Ollama setup can run automatically in live mode with explicit consent and may
+  download model weights.
 - Update metadata checks use local fixtures.
 - Public releases still require external signing/notarization credentials.
 - Windows MSI/NSIS installers must be built and signed on Windows.

@@ -62,5 +62,6 @@ Use dry-run installer flows when you want to understand the recommended setup
 without changing your machine or downloading large files.
 
 Use **Live install and run** when you want the app to execute the runnable
-macOS Ollama setup. The app runs one command per **Run next step** click, so you
-can stop between package install, provider startup, model pull, and probe steps.
+macOS Ollama setup. Use **Run next step** when you want to supervise each
+command, or **Auto install and run** when you want the app to execute every
+supported live step in sequence after consent.

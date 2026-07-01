@@ -152,7 +152,13 @@ fn endpoint_response(
         ("GET", "/api/health") => health_response(),
         ("GET", "/api/integration/manifest") => manifest_response(),
         ("GET", "/api/integration/config") => config_response(provider_state),
-        ("POST", "/api/integration/recommend") => recommendation_response(),
+        ("POST", "/api/integration/recommend") => recommendation_response(request.body),
+        ("POST", "/api/integration/select-model") => {
+            select_model_response(provider_state, request.body)
+        }
+        ("POST", "/api/integration/select-runtime") => {
+            select_model_response(provider_state, request.body)
+        }
         ("GET", "/api/integration/providers") => providers_response(),
         ("POST", "/api/integration/providers/local-ai-router-broker/start") => json_response(
             200,
@@ -204,8 +210,17 @@ fn manifest_response() -> LocalApiResponse {
                 "config": "/api/integration/config",
                 "recommend": "/api/integration/recommend",
                 "providers": "/api/integration/providers",
+                "select_model": "/api/integration/select-model",
+                "select_runtime": "/api/integration/select-runtime",
                 "models": "/v1/models",
                 "chat_completions": "/v1/chat/completions"
+            },
+            "capabilities": {
+                "model_switching": true,
+                "task_aware_model_selection": true,
+                "provider_autostart": true,
+                "automatic_live_install": true,
+                "streaming_chat": false
             }
         }),
     )
@@ -271,7 +286,13 @@ fn config_response(provider_state: &Arc<Mutex<ProviderManager>>) -> LocalApiResp
                 "LOCAL_AI_ROUTER_AUTOSTART": "true",
                 "LOCAL_AI_ROUTER_AUTO_APPLY": "true",
                 "LOCAL_AI_ROUTER_AUTO_START_PROVIDER": "true",
-                "LOCAL_AI_ROUTER_AUTO_INSTALL": "false"
+                "LOCAL_AI_ROUTER_AUTO_INSTALL": "true"
+            },
+            "installer_capabilities": {
+                "automatic_live_install": true,
+                "requires_user_consent": true,
+                "supported_live_plans": ["apple-silicon-recommended", "intel-mac-recommended"],
+                "dry_run_default": true
             },
             "selected_runtime": selected,
             "provider_statuses": statuses,
@@ -284,7 +305,12 @@ fn config_response(provider_state: &Arc<Mutex<ProviderManager>>) -> LocalApiResp
     )
 }
 
-fn recommendation_response() -> LocalApiResponse {
+fn recommendation_response(body: Option<Value>) -> LocalApiResponse {
+    let allow_install = body
+        .as_ref()
+        .and_then(|value| value.get("allow_install"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     json_response(
         200,
         json!({
@@ -297,8 +323,15 @@ fn recommendation_response() -> LocalApiResponse {
             "installed": true,
             "running": true,
             "startable": false,
+            "installable": allow_install,
+            "requires_user_consent": allow_install,
+            "install_flow": if allow_install { "open Local AI Router > Models > Live install and run > Auto install and run" } else { "disabled by request" },
             "status": "reachable",
-            "detail": "Use Local AI Router's localhost OpenAI-compatible endpoint."
+            "detail": if allow_install {
+                "Use Local AI Router's localhost OpenAI-compatible endpoint. Automatic model setup is available from the desktop app after explicit live-install consent."
+            } else {
+                "Use Local AI Router's localhost OpenAI-compatible endpoint."
+            }
         }),
     )
 }
@@ -321,6 +354,202 @@ fn providers_response() -> LocalApiResponse {
             }]
         }),
     )
+}
+
+fn select_model_response(
+    provider_state: &Arc<Mutex<ProviderManager>>,
+    body: Option<Value>,
+) -> LocalApiResponse {
+    let body = body.unwrap_or_else(|| json!({}));
+    let requested_provider = body
+        .get("provider_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let model_candidates = model_candidates_for_selection(&body);
+    let mut errors = Vec::new();
+    let mut providers = match provider_state.lock() {
+        Ok(providers) => providers,
+        Err(_) => {
+            return openai_error(
+                503,
+                "provider_state_unavailable",
+                "server_error",
+                "Local AI Router provider state is unavailable.",
+            );
+        }
+    };
+    let provider_order = requested_provider
+        .as_deref()
+        .map(|provider_id| vec![provider_id.to_string()])
+        .unwrap_or_else(|| {
+            PROVIDER_ORDER
+                .iter()
+                .map(|provider_id| (*provider_id).to_string())
+                .collect()
+        });
+
+    for provider_id in &provider_order {
+        match providers.start(provider_id) {
+            Ok(_) => {}
+            Err(err) => errors.push(format!("{provider_id} start: {err}")),
+        }
+        for model_id in &model_candidates {
+            match providers.select_model(provider_id, model_id) {
+                Ok(status) => {
+                    let runtime_model = status
+                        .active_model
+                        .clone()
+                        .unwrap_or_else(|| model_id.clone());
+                    return json_response(
+                        200,
+                        json!({
+                            "ok": true,
+                            "provider_id": status.definition.id,
+                            "provider_name": status.definition.name,
+                            "provider_kind": status.definition.kind,
+                            "provider_base_url": status.definition.base_url,
+                            "requested_model": model_id,
+                            "runtime_model": runtime_model,
+                            "chat_model": "local-model",
+                            "openai_compatible_base_url": format!("http://{LOCAL_API_HOST}:{LOCAL_API_PORT}/v1"),
+                            "task": body.get("task").cloned().unwrap_or(Value::Null),
+                            "needs": body.get("needs").cloned().unwrap_or_else(|| json!([])),
+                            "detail": "Selected model for future local-model chat requests."
+                        }),
+                    );
+                }
+                Err(err) => errors.push(format!("{provider_id} {model_id}: {err}")),
+            }
+        }
+
+        match providers.list_models(provider_id) {
+            Ok(models) => {
+                if let Some(model) = models.into_iter().find(|model| model.supports_chat) {
+                    let model_id = model.id.clone();
+                    match providers.select_model(provider_id, &model_id) {
+                        Ok(status) => {
+                            let runtime_model = status.active_model.unwrap_or(model.id);
+                            return json_response(
+                                200,
+                                json!({
+                                    "ok": true,
+                                    "provider_id": status.definition.id,
+                                    "provider_name": status.definition.name,
+                                    "provider_kind": status.definition.kind,
+                                    "provider_base_url": status.definition.base_url,
+                                    "requested_model": model_id,
+                                    "runtime_model": runtime_model,
+                                    "chat_model": "local-model",
+                                    "openai_compatible_base_url": format!("http://{LOCAL_API_HOST}:{LOCAL_API_PORT}/v1"),
+                                    "task": body.get("task").cloned().unwrap_or(Value::Null),
+                                    "needs": body.get("needs").cloned().unwrap_or_else(|| json!([])),
+                                    "detail": "Selected the first available provider chat model because preferred task models were not installed."
+                                }),
+                            );
+                        }
+                        Err(err) => errors.push(format!("{provider_id} fallback select: {err}")),
+                    }
+                }
+            }
+            Err(err) => errors.push(format!("{provider_id} list models: {err}")),
+        }
+    }
+
+    openai_error(
+        503,
+        "model_switch_unavailable",
+        "provider_unavailable",
+        &format!(
+            "Local AI Router could not select a model. Install/start a provider or run the automatic setup. Attempts: {}",
+            errors.join("; ")
+        ),
+    )
+}
+
+fn model_candidates_for_selection(body: &Value) -> Vec<String> {
+    if let Some(model) = body
+        .get("model")
+        .or_else(|| body.get("model_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        return vec![model.to_string()];
+    }
+
+    let task = body
+        .get("task")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let context_size = body
+        .get("context_size")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let needs = body
+        .get("needs")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_ascii_lowercase)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let has_need = |needle: &str| needs.iter().any(|need| need.contains(needle));
+
+    if task.contains("code") || task.contains("card") || has_need("code") {
+        return vec![
+            "qwen2-5-coder-7b-q4".to_string(),
+            "llama-3-1-8b-q4".to_string(),
+            "phi-3-5-mini-q4".to_string(),
+        ];
+    }
+    if has_need("reasoning") || task.contains("plan") || task.contains("reason") {
+        return vec![
+            "llama-3-1-8b-q4".to_string(),
+            "qwen2-5-14b-q4".to_string(),
+            "qwen2-5-coder-7b-q4".to_string(),
+        ];
+    }
+    if has_need("arabic") || task.contains("arabic") {
+        return vec![
+            "llama-3-1-8b-q4".to_string(),
+            "qwen2-5-14b-q4".to_string(),
+            "qwen2-5-coder-7b-q4".to_string(),
+        ];
+    }
+    if task.contains("summar")
+        || task.contains("ingest")
+        || task.contains("transcript")
+        || context_size == "large"
+        || has_need("long")
+    {
+        return vec![
+            "llama-3-1-8b-q4".to_string(),
+            "qwen2-5-14b-q4".to_string(),
+            "phi-3-5-mini-q4".to_string(),
+        ];
+    }
+    if has_need("low_latency")
+        || has_need("fast")
+        || task.contains("quick")
+        || task.contains("chat")
+    {
+        return vec![
+            "phi-3-5-mini-q4".to_string(),
+            "llama-3-1-8b-q4".to_string(),
+            "qwen2-5-coder-7b-q4".to_string(),
+        ];
+    }
+
+    vec![
+        "llama-3-1-8b-q4".to_string(),
+        "phi-3-5-mini-q4".to_string(),
+        "qwen2-5-coder-7b-q4".to_string(),
+    ]
 }
 
 fn models_response() -> LocalApiResponse {
@@ -545,14 +774,61 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert_eq!(response.body["auth_required"], false);
+        assert_eq!(response.body["capabilities"]["model_switching"], true);
         assert_eq!(
             response.body["endpoints"]["recommend"],
             "/api/integration/recommend"
         );
         assert_eq!(
+            response.body["endpoints"]["select_model"],
+            "/api/integration/select-model"
+        );
+        assert_eq!(
             response.body["endpoints"]["chat_completions"],
             "/v1/chat/completions"
         );
+    }
+
+    #[test]
+    fn task_selection_prefers_fast_models_for_quick_chat() {
+        let candidates = model_candidates_for_selection(&json!({
+            "task": "quick_chat",
+            "needs": ["low_latency"]
+        }));
+
+        assert_eq!(candidates[0], "phi-3-5-mini-q4");
+        assert!(candidates.contains(&"llama-3-1-8b-q4".to_string()));
+    }
+
+    #[test]
+    fn task_selection_prefers_balanced_models_for_large_source_work() {
+        let candidates = model_candidates_for_selection(&json!({
+            "task": "summarize_sources",
+            "context_size": "large"
+        }));
+
+        assert_eq!(candidates[0], "llama-3-1-8b-q4");
+    }
+
+    #[test]
+    fn task_selection_prefers_reasoning_models_for_arabic_planning() {
+        let candidates = model_candidates_for_selection(&json!({
+            "task": "plan_drafting",
+            "needs": ["arabic", "reasoning"]
+        }));
+
+        assert_eq!(candidates[0], "llama-3-1-8b-q4");
+        assert!(candidates.contains(&"qwen2-5-14b-q4".to_string()));
+    }
+
+    #[test]
+    fn task_selection_honors_explicit_model_override() {
+        let candidates = model_candidates_for_selection(&json!({
+            "task": "quick_chat",
+            "model": "qwen2-5-coder-7b-q4"
+        }));
+
+        assert_eq!(candidates, vec!["qwen2-5-coder-7b-q4"]);
     }
 
     #[test]

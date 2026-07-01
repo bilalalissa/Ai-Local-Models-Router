@@ -66,6 +66,7 @@ import {
   type InstallPlan,
   type InstallRunState,
   advanceInstallRun,
+  autoInstallAndRun,
   cancelInstallRun,
   getInstallState,
   listInstallPlans,
@@ -2829,6 +2830,7 @@ function InstallerPage() {
   const [selectedPlanId, setSelectedPlanId] = useState("");
   const [consentGranted, setConsentGranted] = useState(false);
   const [installMode, setInstallMode] = useState<"dry" | "live">("dry");
+  const [autoRunning, setAutoRunning] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Loading install plans...");
   const [error, setError] = useState<string | null>(null);
 
@@ -2899,6 +2901,36 @@ function InstallerPage() {
     );
   }, [consentGranted, installMode, runAction, selectedPlan]);
 
+  const handleAutoInstallAndRun = useCallback(async () => {
+    if (!selectedPlan) return;
+    if (!consentGranted) {
+      setStatusMessage("Consent required before automatic live install.");
+      return;
+    }
+    setError(null);
+    setAutoRunning(true);
+    setStatusMessage("Automatic live install started.");
+    try {
+      const nextState = await autoInstallAndRun({
+        plan_id: selectedPlan.id,
+        dry_run: false,
+        consent_granted: true
+      });
+      setState(nextState);
+      setInstallMode("live");
+      setStatusMessage(
+        nextState.status === "Completed"
+          ? "Automatic live install completed."
+          : `Automatic live install ended with ${nextState.status}.`
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Automatic live install failed.");
+    } finally {
+      setAutoRunning(false);
+    }
+  }, [consentGranted, selectedPlan]);
+
   if (!selectedPlan || !state) {
     return (
       <div className="installer-page">
@@ -2916,6 +2948,7 @@ function InstallerPage() {
   const isRunning = state.status === "Running";
   const isPaused = state.status === "Paused";
   const activePlan = plans.find((plan) => plan.id === state.selected_plan_id) ?? selectedPlan;
+  const canAutoInstall = installMode === "live" && consentGranted && !isRunning && !isPaused && !autoRunning;
 
   return (
     <div className="installer-page">
@@ -3004,8 +3037,17 @@ function InstallerPage() {
               {installMode === "dry" ? "Preview recommended setup" : "Start live install"}
             </button>
             <button
+              className="resume-button"
+              disabled={!canAutoInstall}
+              onClick={handleAutoInstallAndRun}
+              type="button"
+            >
+              <Play size={16} />
+              Auto install and run
+            </button>
+            <button
               className="secondary-button"
-              disabled={!isRunning}
+              disabled={!isRunning || autoRunning}
               onClick={() =>
                 runAction(
                   advanceInstallRun,
@@ -3019,7 +3061,7 @@ function InstallerPage() {
             </button>
             <button
               className="secondary-button"
-              disabled={!isRunning}
+              disabled={!isRunning || autoRunning}
               onClick={() => runAction(pauseInstallRun, "Installer paused.")}
               type="button"
             >
@@ -3028,7 +3070,7 @@ function InstallerPage() {
             </button>
             <button
               className="resume-button"
-              disabled={!isPaused}
+              disabled={!isPaused || autoRunning}
               onClick={() => runAction(resumeInstallRun, "Installer resumed.")}
               type="button"
             >
@@ -3037,7 +3079,7 @@ function InstallerPage() {
             </button>
             <button
               className="secondary-button"
-              disabled={!["Running", "Paused", "NeedsConsent"].includes(state.status)}
+              disabled={autoRunning || !["Running", "Paused", "NeedsConsent"].includes(state.status)}
               onClick={() => runAction(cancelInstallRun, "Installer canceled.")}
               type="button"
             >
@@ -4258,7 +4300,13 @@ function buildRouterConfigJson(decision: RouterDecision | null, providers: Provi
         LOCAL_AI_ROUTER_AUTOSTART: "true",
         LOCAL_AI_ROUTER_AUTO_APPLY: "true",
         LOCAL_AI_ROUTER_AUTO_START_PROVIDER: "true",
-        LOCAL_AI_ROUTER_AUTO_INSTALL: "false"
+        LOCAL_AI_ROUTER_AUTO_INSTALL: "true"
+      },
+      installer_capabilities: {
+        automatic_live_install: true,
+        requires_user_consent: true,
+        supported_live_plans: ["apple-silicon-recommended", "intel-mac-recommended"],
+        dry_run_default: true
       },
       selected_route: selected
         ? {

@@ -67,8 +67,8 @@ Common problems and fixes:
 
 ## Use The Recommended Installer
 
-Goal: preview setup commands or run the macOS Ollama setup with explicit
-consent.
+Goal: preview setup commands or run the macOS Ollama setup automatically with
+explicit consent.
 
 Before you start: choose **Dry run** for a preview or **Live install and run**
 when you want the desktop app to execute runnable macOS Ollama setup steps. For
@@ -80,16 +80,20 @@ Steps:
 2. Select the recommended setup for your platform.
 3. Review runtime, model, and cache folders.
 4. Check the consent box.
-5. Click **Install recommended setup**.
-6. Advance the dry run and inspect logs.
+5. Click **Preview recommended setup** for dry-run review, **Start live install**
+   for supervised step-by-step execution, or **Auto install and run** to run all
+   supported live steps.
+6. Inspect logs and provider probe status.
 
-Expected result: command hooks and logs advance without executing downloads.
+Expected result: dry-run command hooks advance without executing downloads.
+Live mode can install Ollama, start it, pull the recommended model, and probe
+the endpoint on supported macOS plans.
 
 Common problems and fixes:
 
 - Button disabled: check the consent box.
-- Expecting real install: install runtimes/models manually until live downloads
-  are implemented.
+- Expecting real install from dry-run: switch to **Live install and run**, check
+  consent, then use **Auto install and run**.
 
 ## Route A Test Prompt Locally
 

@@ -114,11 +114,13 @@ is running yet. See the
    desktop app execute runnable setup steps.
 5. Confirm the consent checkbox.
 6. Click **Preview recommended setup** or **Start live install**.
-7. Use **Advance dry run** or **Run next step** to move one command at a time.
+7. Use **Advance dry run** or **Run next step** to move one command at a time, or
+   choose **Auto install and run** in live mode to run the full supported setup.
 
 Expected result: dry-run mode only shows commands and logs. Live mode can
 install Ollama, start the Ollama service, pull the recommended model, and probe
-the provider endpoint on macOS.
+the provider endpoint on macOS. **Auto install and run** performs those live
+steps in sequence after consent.
 
 Dry-run means the app previews the setup plan without changing package managers,
 installing runtimes, or downloading model weights. Regular/live provider checks
