@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 use std::{
     io::{Read, Write},
     net::{TcpStream, ToSocketAddrs},
+    process::{Command, Stdio},
+    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -153,6 +155,7 @@ impl ProviderManager {
                     "http://127.0.0.1:11434",
                     "~/Library/Application Support/Local AI Router/providers/ollama",
                     Some("llama3.1:8b"),
+                    Some("ollama serve"),
                     "Ollama local HTTP API at /api/tags and /api/generate.",
                 ),
                 local_provider(
@@ -163,6 +166,7 @@ impl ProviderManager {
                     "http://127.0.0.1:1234/v1",
                     "~/Library/Application Support/Local AI Router/providers/lm-studio",
                     Some("local-model"),
+                    None,
                     "LM Studio local server with the OpenAI-compatible API enabled.",
                 ),
                 local_provider(
@@ -173,6 +177,7 @@ impl ProviderManager {
                     "http://127.0.0.1:5001/v1",
                     "~/Library/Application Support/Local AI Router/providers/custom-openai",
                     Some("local-model"),
+                    None,
                     "Custom local OpenAI-compatible endpoint. API key storage is deferred.",
                 ),
                 local_provider(
@@ -183,6 +188,7 @@ impl ProviderManager {
                     "http://127.0.0.1:8080/v1",
                     "~/Library/Application Support/Local AI Router/providers/mlx-lm",
                     Some("mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"),
+                    None,
                     "MLX-LM OpenAI-compatible server for Apple Silicon.",
                 ),
                 local_provider(
@@ -193,6 +199,7 @@ impl ProviderManager {
                     "http://127.0.0.1:8081/v1",
                     "~/Library/Application Support/Local AI Router/providers/llama-cpp",
                     Some("local-gguf"),
+                    None,
                     "llama.cpp server with OpenAI-compatible endpoints.",
                 ),
             ],
@@ -627,13 +634,45 @@ impl ProviderAdapter for LocalHttpProvider {
         if !self.settings.enabled {
             self.settings.enabled = true;
             self.push_log("info", "Provider enabled from start action.");
-        } else {
-            self.push_log(
-                "info",
-                "Start action refreshed endpoint health; process launch is a Stage 7 hook.",
-            );
         }
-        self.health()
+        self.paused = false;
+
+        let initial = self.health();
+        if initial.running {
+            self.push_log("info", "Provider endpoint is already reachable.");
+            return initial;
+        }
+
+        let Some(command) = self.settings.launch_command.clone() else {
+            self.push_log(
+                "warn",
+                "Start action cannot launch this provider because no launch command is configured.",
+            );
+            return self
+                .status("Provider endpoint unavailable; start the provider outside the app.");
+        };
+
+        match spawn_launch_command(&command) {
+            Ok(()) => {
+                self.last_health = ProviderHealth::Starting;
+                self.push_log("info", &format!("Launch command started: {command}"));
+                for _ in 0..10 {
+                    thread::sleep(Duration::from_millis(500));
+                    if let Ok((models, latency_ms)) = self.fetch_models() {
+                        return self.apply_probe_result(Ok((models, latency_ms)));
+                    }
+                }
+                self.last_health = ProviderHealth::Starting;
+                self.status("Launch command started; waiting for provider endpoint.")
+            }
+            Err(err) => {
+                self.last_health = ProviderHealth::Error;
+                self.last_running = false;
+                self.last_latency_ms = None;
+                self.push_log("error", &format!("Provider launch command failed: {err}"));
+                self.status(&format!("Provider launch command failed: {err}"))
+            }
+        }
     }
 
     fn stop(&mut self) -> ProviderStatus {
@@ -723,6 +762,7 @@ fn local_provider(
     base_url: &str,
     folder: &str,
     default_model_id: Option<&str>,
+    launch_command: Option<&str>,
     notes: &str,
 ) -> ProviderInstance {
     let definition = ProviderDefinition {
@@ -748,7 +788,7 @@ fn local_provider(
         enabled: true,
         base_url: definition.base_url.clone(),
         folder: folder.to_string(),
-        launch_command: None,
+        launch_command: launch_command.map(str::to_string),
         api_key_configured: false,
         notes: notes.to_string(),
     };
@@ -766,6 +806,70 @@ fn local_provider(
     };
     provider.push_log("info", "Local provider adapter initialized.");
     ProviderInstance::LocalHttp(provider)
+}
+
+fn spawn_launch_command(command: &str) -> Result<(), String> {
+    let parts = split_launch_command(command)?;
+    let Some((program, args)) = parts.split_first() else {
+        return Err("empty launch command".to_string());
+    };
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("{program}: {err}"))
+}
+
+fn split_launch_command(command: &str) -> Result<Vec<String>, String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    for ch in command.trim().chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !current.is_empty() {
+                parts.push(std::mem::take(&mut current));
+            }
+            continue;
+        }
+        current.push(ch);
+    }
+
+    if quote.is_some() {
+        return Err("unterminated quote in launch command".to_string());
+    }
+    if escaped {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    Ok(parts)
 }
 
 fn install_plan_for(
@@ -1141,5 +1245,16 @@ mod tests {
             .notes
             .iter()
             .any(|note| note.contains("no commands are executed")));
+    }
+
+    #[test]
+    fn split_launch_command_preserves_quoted_arguments() {
+        let parts = split_launch_command("mlx_lm.server --model 'Qwen Coder' --port 8080")
+            .expect("command parses");
+
+        assert_eq!(
+            parts,
+            vec!["mlx_lm.server", "--model", "Qwen Coder", "--port", "8080"]
+        );
     }
 }

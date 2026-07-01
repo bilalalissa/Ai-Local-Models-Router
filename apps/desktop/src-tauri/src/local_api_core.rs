@@ -151,6 +151,7 @@ fn endpoint_response(
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/api/health") => health_response(),
         ("GET", "/api/integration/manifest") => manifest_response(),
+        ("GET", "/api/integration/config") => config_response(provider_state),
         ("POST", "/api/integration/recommend") => recommendation_response(),
         ("GET", "/api/integration/providers") => providers_response(),
         ("POST", "/api/integration/providers/local-ai-router-broker/start") => json_response(
@@ -200,10 +201,84 @@ fn manifest_response() -> LocalApiResponse {
             "scope": "localhost-only",
             "endpoints": {
                 "health": "/api/health",
+                "config": "/api/integration/config",
                 "recommend": "/api/integration/recommend",
                 "providers": "/api/integration/providers",
                 "models": "/v1/models",
                 "chat_completions": "/v1/chat/completions"
+            }
+        }),
+    )
+}
+
+fn config_response(provider_state: &Arc<Mutex<ProviderManager>>) -> LocalApiResponse {
+    let statuses = match provider_state.lock() {
+        Ok(mut providers) => providers.statuses(),
+        Err(_) => {
+            return openai_error(
+                503,
+                "provider_state_unavailable",
+                "server_error",
+                "Local AI Router provider state is unavailable.",
+            );
+        }
+    };
+    let selected = statuses
+        .iter()
+        .find(|status| {
+            status.running
+                && !status.paused
+                && matches!(
+                    status.health,
+                    crate::provider_core::ProviderHealth::Healthy
+                        | crate::provider_core::ProviderHealth::Degraded
+                )
+        })
+        .map(|status| {
+            json!({
+                "provider_id": status.definition.id,
+                "provider_name": status.definition.name,
+                "provider_kind": status.definition.kind,
+                "provider_base_url": status.definition.base_url,
+                "model": status.active_model.as_deref().unwrap_or("local-model"),
+                "health": status.health,
+                "model_count": status.model_count,
+                "latency_ms": status.latency_ms
+            })
+        });
+    let ready = selected.is_some();
+
+    json_response(
+        200,
+        json!({
+            "app": "Local AI Router",
+            "status": if ready { "ready" } else { "waiting_for_provider" },
+            "generated_at_ms": now_ms(),
+            "local_integration": {
+                "base_url": format!("http://{LOCAL_API_HOST}:{LOCAL_API_PORT}"),
+                "openai_compatible_base_url": format!("http://{LOCAL_API_HOST}:{LOCAL_API_PORT}/v1"),
+                "health_url": format!("http://{LOCAL_API_HOST}:{LOCAL_API_PORT}/api/health"),
+                "models_url": format!("http://{LOCAL_API_HOST}:{LOCAL_API_PORT}/v1/models"),
+                "auth_method": "none",
+                "scope": "localhost-only"
+            },
+            "learning_boost_env": {
+                "DEFAULT_AI_PROVIDER": "openai_compat",
+                "DEFAULT_AI_MODEL": "local-model",
+                "OPENAI_COMPAT_BASE_URL": format!("http://{LOCAL_API_HOST}:{LOCAL_API_PORT}/v1"),
+                "OPENAI_COMPAT_AUTH_METHOD": "none",
+                "LOCAL_AI_ROUTER_BASE_URL": format!("http://{LOCAL_API_HOST}:{LOCAL_API_PORT}"),
+                "LOCAL_AI_ROUTER_AUTOSTART": "true",
+                "LOCAL_AI_ROUTER_AUTO_APPLY": "true",
+                "LOCAL_AI_ROUTER_AUTO_START_PROVIDER": "true",
+                "LOCAL_AI_ROUTER_AUTO_INSTALL": "false"
+            },
+            "selected_runtime": selected,
+            "provider_statuses": statuses,
+            "note": if ready {
+                "A local provider is reachable. Companion apps can use the OpenAI-compatible router URL."
+            } else {
+                "The router API is running, but no local model provider is reachable yet. Install/start Ollama, LM Studio, MLX-LM, llama.cpp, or a custom OpenAI-compatible server."
             }
         }),
     )
@@ -305,6 +380,13 @@ fn chat_response(
     };
 
     for provider_id in PROVIDER_ORDER {
+        match providers.start(provider_id) {
+            Ok(status) if !status.running => {
+                errors.push(format!("{provider_id} start: {}", status.message));
+            }
+            Ok(_) => {}
+            Err(err) => errors.push(format!("{provider_id} start: {err}")),
+        }
         let request = ProviderChatRequest {
             provider_id: provider_id.to_string(),
             model_id: provider_model.clone(),

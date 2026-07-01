@@ -42,10 +42,15 @@ The integration API answers:
 
 - `GET /api/health`
 - `GET /api/integration/manifest`
+- `GET /api/integration/config`
 - `POST /api/integration/recommend`
 - `GET /api/integration/providers`
 - `GET /v1/models`
 - `POST /v1/chat/completions`
+
+`/api/integration/config` returns a copy/export-friendly JSON payload with the
+current router URL, OpenAI-compatible URL, Learning Boost environment values,
+selected runtime if one is reachable, and provider health states.
 
 `/v1/models` always exposes the stable `local-model` alias for companion apps.
 For chat, the router forwards non-streaming requests to the first reachable

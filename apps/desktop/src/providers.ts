@@ -117,6 +117,7 @@ const fallbackProviders: FallbackProvider[] = [
       providerModel("llama3.1:8b", "llama3.1:8b", "llama / Q4_K_M", 5_368_709_120, true),
       providerModel("nomic-embed-text", "nomic-embed-text", "Ollama / local", 629_145_600, false)
     ],
+    "ollama serve",
     "Ollama local HTTP API at /api/tags and /api/generate."
   ),
   providerSeed(
@@ -129,6 +130,7 @@ const fallbackProviders: FallbackProvider[] = [
       providerModel("local-model", "local-model", "OpenAI-compatible", 4_563_402_752, true),
       providerModel("qwen2.5-coder-local", "qwen2.5-coder-local", "OpenAI-compatible", 5_100_273_664, true)
     ],
+    null,
     "LM Studio local server with the OpenAI-compatible API enabled."
   ),
   providerSeed(
@@ -138,6 +140,7 @@ const fallbackProviders: FallbackProvider[] = [
     "http://127.0.0.1:5001/v1",
     "~/Library/Application Support/Local AI Router/providers/custom-openai",
     [providerModel("local-chat", "local-chat", "OpenAI-compatible", 0, true)],
+    null,
     "Custom local OpenAI-compatible endpoint. API key storage is deferred."
   ),
   providerSeed(
@@ -155,6 +158,7 @@ const fallbackProviders: FallbackProvider[] = [
         true
       )
     ],
+    null,
     "MLX-LM OpenAI-compatible server for Apple Silicon."
   ),
   providerSeed(
@@ -164,6 +168,7 @@ const fallbackProviders: FallbackProvider[] = [
     "http://127.0.0.1:8081/v1",
     "~/Library/Application Support/Local AI Router/providers/llama-cpp",
     [providerModel("local-gguf", "local-gguf", "OpenAI-compatible", 4_563_402_752, true)],
+    null,
     "llama.cpp server with OpenAI-compatible endpoints."
   )
 ];
@@ -401,6 +406,7 @@ function providerSeed(
   baseUrl: string,
   folder: string,
   models: ProviderModel[],
+  launchCommand: string | null,
   notes: string
 ): FallbackProvider {
   const definition = {
@@ -428,7 +434,7 @@ function providerSeed(
       enabled: true,
       base_url: baseUrl,
       folder,
-      launch_command: null,
+      launch_command: launchCommand,
       api_key_configured: false,
       notes
     },

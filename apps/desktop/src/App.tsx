@@ -3175,6 +3175,13 @@ function RouterShell({
 
   const activeMode = isPaused ? "Paused" : mode;
   const selected = decision?.selected;
+  const selectedProvider = selected
+    ? providers.find((provider) => provider.definition.id === selected.provider_id)
+    : null;
+  const routerConfigJson = useMemo(
+    () => buildRouterConfigJson(decision, providers),
+    [decision, providers]
+  );
 
   const handleThresholdChange = useCallback((name: keyof typeof defaultRouterThresholds, value: number) => {
     setThresholds((current) => ({ ...current, [name]: value }));
@@ -3192,6 +3199,16 @@ function RouterShell({
       setStatusMessage("Router test prompt failed.");
     }
   }, [decision, testPrompt]);
+
+  const handleCopyRouterConfig = useCallback(async () => {
+    await copyText(routerConfigJson);
+    setStatusMessage("Router configuration JSON copied.");
+  }, [routerConfigJson]);
+
+  const handleExportRouterConfig = useCallback(() => {
+    downloadTextFile(routerConfigJson, "local-ai-router-config.json", "application/json");
+    setStatusMessage("Router configuration JSON exported.");
+  }, [routerConfigJson]);
 
   if (!hardware || providers.length === 0 || !decision) {
     return (
@@ -3215,7 +3232,7 @@ function RouterShell({
         </div>
         <div>
           <strong>
-            {isPaused ? "Local AI Router is paused." : "Router automation is running."}
+            {isPaused ? "Local AI Router is paused." : "Router control plane is running."}
           </strong>
           <span>
             {isPaused
@@ -3287,6 +3304,10 @@ function RouterShell({
           <StatusLine label="Mode" value={decision.mode} />
           <StatusLine label="Score" value={selected ? `${selected.score} / ${selected.label}` : "Not available"} />
           <StatusLine label="Executable" value={decision.can_execute ? "Yes" : "No"} />
+          <StatusLine
+            label="Provider runtime"
+            value={selectedProvider?.running ? `${selectedProvider.health} at ${selectedProvider.definition.base_url}` : "Waiting for a local provider"}
+          />
           <StatusLine label="Remote candidates" value={String(remoteCandidates.length)} />
           <div className="fallback-list">
             <span>Fallback candidates</span>
@@ -3324,6 +3345,20 @@ function RouterShell({
           </div>
         </Panel>
       </div>
+
+      <Panel title="Manual configuration JSON" className="router-config-panel">
+        <div className="router-config-actions">
+          <button className="secondary-button" onClick={handleCopyRouterConfig} type="button">
+            <Clipboard size={16} />
+            Copy JSON
+          </button>
+          <button className="secondary-button" onClick={handleExportRouterConfig} type="button">
+            <Download size={16} />
+            Export JSON
+          </button>
+        </div>
+        <pre>{routerConfigJson}</pre>
+      </Panel>
 
       <Panel title="Test prompt">
         <div className="test-prompt-shell">
@@ -4142,6 +4177,94 @@ function exportMimeType(format: HardwareExportFormat): string {
   if (format === "Json") return "application/json";
   if (format === "Csv") return "text/csv";
   return "text/markdown";
+}
+
+function buildRouterConfigJson(decision: RouterDecision | null, providers: ProviderStatus[]): string {
+  if (!decision) {
+    return JSON.stringify(
+      {
+        app: "Local AI Router",
+        status: "loading",
+        local_integration: {
+          base_url: "http://127.0.0.1:17640",
+          openai_compatible_base_url: "http://127.0.0.1:17640/v1",
+          auth_method: "none"
+        }
+      },
+      null,
+      2
+    );
+  }
+  const selected = decision.selected;
+  const selectedProvider = selected
+    ? providers.find((provider) => provider.definition.id === selected.provider_id)
+    : null;
+  const ready = decision.can_execute && !!selectedProvider?.running && !selectedProvider.paused;
+  return JSON.stringify(
+    {
+      app: "Local AI Router",
+      status: ready ? "ready" : "waiting_for_provider",
+      generated_at: new Date().toISOString(),
+      local_integration: {
+        base_url: "http://127.0.0.1:17640",
+        openai_compatible_base_url: "http://127.0.0.1:17640/v1",
+        health_url: "http://127.0.0.1:17640/api/health",
+        models_url: "http://127.0.0.1:17640/v1/models",
+        chat_completions_url: "http://127.0.0.1:17640/v1/chat/completions",
+        auth_method: "none",
+        scope: "localhost-only"
+      },
+      learning_boost_env: {
+        DEFAULT_AI_PROVIDER: "openai_compat",
+        DEFAULT_AI_MODEL: selected?.model_id ?? "local-model",
+        OPENAI_COMPAT_BASE_URL: "http://127.0.0.1:17640/v1",
+        OPENAI_COMPAT_AUTH_METHOD: "none",
+        LOCAL_AI_ROUTER_BASE_URL: "http://127.0.0.1:17640",
+        LOCAL_AI_ROUTER_AUTOSTART: "true",
+        LOCAL_AI_ROUTER_AUTO_APPLY: "true",
+        LOCAL_AI_ROUTER_AUTO_START_PROVIDER: "true",
+        LOCAL_AI_ROUTER_AUTO_INSTALL: "false"
+      },
+      selected_route: selected
+        ? {
+            model_id: selected.model_id,
+            model_name: selected.model_name,
+            provider_id: selected.provider_id,
+            provider_name: selected.provider_name,
+            provider_kind: selected.provider,
+            score: selected.score,
+            label: selected.label,
+            latency_ms: selected.latency_ms
+          }
+        : null,
+      provider_runtime: selectedProvider
+        ? {
+            provider_id: selectedProvider.definition.id,
+            provider_name: selectedProvider.definition.name,
+            provider_kind: selectedProvider.definition.kind,
+            base_url: selectedProvider.definition.base_url,
+            running: selectedProvider.running,
+            paused: selectedProvider.paused,
+            health: selectedProvider.health,
+            active_model: selectedProvider.active_model,
+            model_count: selectedProvider.model_count,
+            latency_ms: selectedProvider.latency_ms,
+            message: selectedProvider.message
+          }
+        : null,
+      router_decision: {
+        mode: decision.mode,
+        can_execute: decision.can_execute,
+        suspended: decision.suspended,
+        reasons: decision.reasons
+      },
+      note: ready
+        ? "Use openai_compatible_base_url from a local OpenAI-compatible client."
+        : "The router API can be running while the model runtime is not. Start or install a provider such as Ollama, LM Studio, MLX-LM, or llama.cpp before expecting chat responses."
+    },
+    null,
+    2
+  );
 }
 
 function downloadTextFile(content: string, filename: string, mimeType: string) {

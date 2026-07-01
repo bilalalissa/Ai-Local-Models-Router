@@ -92,7 +92,9 @@ DEFAULT_AI_MODEL=local-model
 
 Expected result: Learning Boost can reach the router. If chat returns
 `no_local_provider`, the router is working but no underlying local model server
-is running yet. See [Local Integration API](LOCAL_INTEGRATION_API.md).
+is running yet. See the
+[Learning Boost Operator Guide](LEARNING_BOOST_OPERATOR_GUIDE.md) and
+[Local Integration API](LOCAL_INTEGRATION_API.md).
 
 ## Use The Dry-Run Installer
 

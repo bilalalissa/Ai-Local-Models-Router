@@ -652,6 +652,26 @@ button:disabled {
   gap: 14px;
 }
 
+.router-config-panel pre {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px;
+  background: #f8fafc;
+  color: #172033;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.router-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .router-shell .panel h2 {
   padding: 15px 18px 11px;
 }

@@ -130,6 +130,7 @@ For remote routing:
 ## How To Use The App
 
 - [User Guide](docs/USER_GUIDE.md): task-based guide with annotated screenshots.
+- [Learning Boost Operator Guide](docs/LEARNING_BOOST_OPERATOR_GUIDE.md): connect LLM Agent Learning Boost to Local AI Router.
 - [Scenario Walkthroughs](docs/SCENARIOS.md): end-to-end setup and troubleshooting flows.
 - [Regular vs Dry-Run Methods](docs/REGULAR_VS_DRY_RUN.md): what changes your machine and what only previews work.
 - [Providers](docs/PROVIDERS.md): provider expectations and limitations.
