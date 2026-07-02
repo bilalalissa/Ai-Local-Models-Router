@@ -1345,18 +1345,44 @@ button:disabled {
   font: inherit;
 }
 
-.provider-model-table tbody tr {
-  cursor: pointer;
-}
-
-.provider-model-table td:last-child {
-  min-width: 220px;
-}
-
+.provider-model-panel,
 .provider-chat-panel,
 .provider-plan-panel,
 .provider-uninstall-panel {
   grid-column: 1 / -1;
+}
+
+.provider-model-table {
+  table-layout: fixed;
+}
+
+.provider-model-table tbody tr {
+  cursor: pointer;
+}
+
+.provider-model-table th:nth-child(1),
+.provider-model-table td:nth-child(1) {
+  width: 22%;
+}
+
+.provider-model-table th:nth-child(2),
+.provider-model-table td:nth-child(2) {
+  width: 24%;
+}
+
+.provider-model-table th:nth-child(3),
+.provider-model-table td:nth-child(3) {
+  width: 12%;
+}
+
+.provider-model-table th:nth-child(4),
+.provider-model-table td:nth-child(4) {
+  width: 10%;
+}
+
+.provider-model-table th:nth-child(5),
+.provider-model-table td:nth-child(5) {
+  width: 32%;
 }
 
 .uninstall-result {
@@ -1666,17 +1692,18 @@ button:disabled {
 .table-action {
   min-height: 30px;
   padding: 0 10px;
+  white-space: nowrap;
 }
 
 .table-action-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 8px;
   align-items: center;
 }
 
 .table-action-note {
-  flex-basis: 100%;
+  min-width: 120px;
   color: var(--muted);
   font-size: 12px;
   white-space: normal;
@@ -2161,6 +2188,7 @@ button:disabled {
   }
 
   .hardware-export-panel,
+  .provider-model-panel,
   .provider-chat-panel,
   .settings-wide {
     grid-column: auto;

@@ -1730,7 +1730,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
             </Panel>
           ) : null}
 
-          <Panel title="Model Listing">
+          <Panel title="Model Listing" className="provider-model-panel">
             {models.length > 0 ? (
               <table className="data-table provider-model-table">
                 <thead>
