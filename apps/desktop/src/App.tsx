@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   TerminalSquare,
+  Trash2,
   RefreshCw
 } from "lucide-react";
 import {
@@ -93,6 +94,7 @@ import {
   type ProviderModel,
   type ProviderSettings,
   type ProviderStatus,
+  type ProviderUninstallResult,
   getProviderFolder,
   getProviderLogs,
   getProviderSettings,
@@ -110,6 +112,7 @@ import {
   stopProvider,
   subscribeProviderHealth,
   unloadProviderModel,
+  uninstallProvider,
   updateProviderSettings
 } from "./providers";
 import {
@@ -218,9 +221,9 @@ const pageContent: Record<
 > = {
   models: {
     title: "Models",
-    eyebrow: "Stage 1 page shell",
+    eyebrow: "Model operations",
     summary:
-      "Install, uninstall, force, and switch model actions are intentionally inactive until later stages.",
+      "Use Providers for live model weight cleanup, provider uninstall, and local runtime tests. Model catalog actions remain scoped to compatibility planning.",
     readiness: ["Installed model list", "Detail pane", "Manual action area"]
   },
   updates: {
@@ -1273,6 +1276,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
   const [settings, setSettings] = useState<ProviderSettings | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<ProviderSettings | null>(null);
   const [installPlan, setInstallPlan] = useState<ProviderInstallPlan | null>(null);
+  const [uninstallResult, setUninstallResult] = useState<ProviderUninstallResult | null>(null);
   const [folder, setFolder] = useState("");
   const [prompt, setPrompt] = useState("Say ready from the local provider.");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -1329,6 +1333,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
         setSettings(nextSettings);
         setSettingsDraft(nextSettings);
         setInstallPlan(null);
+        setUninstallResult(null);
         setSelectedModelId((current) => current ?? nextModels[0]?.id ?? null);
       })
       .catch((err) => {
@@ -1367,6 +1372,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
 
   const handleRefresh = useCallback(async () => {
     setError(null);
+    setUninstallResult(null);
     const nextStatuses = await refreshProviderHealth();
     setStatuses(nextStatuses);
     setStatusMessage("Provider health checks refreshed.");
@@ -1416,6 +1422,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
     if (!settingsDraft) return;
     setError(null);
     setInstallPlan(null);
+    setUninstallResult(null);
     try {
       const nextStatus = await updateProviderSettings({
         provider_id: settingsDraft.provider_id,
@@ -1439,6 +1446,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
   const handlePreviewInstallPlan = useCallback(async () => {
     if (!selectedStatus) return;
     setError(null);
+    setUninstallResult(null);
     try {
       const plan = await previewProviderInstallPlan(selectedStatus.definition.id);
       setInstallPlan(plan);
@@ -1448,6 +1456,28 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
       setStatusMessage("Dry-run install plan failed.");
     }
   }, [selectedStatus]);
+
+  const handleUninstallProvider = useCallback(async () => {
+    if (!selectedStatus) return;
+    const approved = window.confirm(
+      `Uninstall ${selectedStatus.definition.name} from Local AI Router?\n\nThis disables the adapter and removes only Local AI Router app-managed provider files. It will not uninstall the runtime app from macOS or Windows.`
+    );
+    if (!approved) return;
+    setError(null);
+    setInstallPlan(null);
+    try {
+      const result = await uninstallProvider(selectedStatus.definition.id);
+      updateOneStatus(result.status);
+      setModels([]);
+      setSelectedModelId(null);
+      setUninstallResult(result);
+      setLogs(await getProviderLogs(selectedStatus.definition.id));
+      setStatusMessage(result.message);
+    } catch (err) {
+      setError(errorMessage(err));
+      setStatusMessage("Provider uninstall failed.");
+    }
+  }, [selectedStatus, updateOneStatus]);
 
   const refreshSelectedProviderDetails = useCallback(
     async (providerId: string) => {
@@ -1599,6 +1629,15 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
               >
                 {selectedStatus.paused ? "Resume tasks" : "Pause tasks"}
               </button>
+              <button
+                className="ghost-button danger-action"
+                disabled={!selectedStatus.definition.capabilities.includes("UninstallProvider")}
+                onClick={handleUninstallProvider}
+                type="button"
+              >
+                <Trash2 size={16} />
+                Uninstall provider
+              </button>
             </div>
           </Panel>
 
@@ -1673,65 +1712,91 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
             )}
           </Panel>
 
+          {uninstallResult ? (
+            <Panel title="Uninstall Result" className="provider-uninstall-panel">
+              <div className="uninstall-result">
+                <strong>{uninstallResult.message}</strong>
+                <span>
+                  App-managed folder: {uninstallResult.app_managed_folder_removed ? "removed" : "not removed"}
+                </span>
+                <code>{uninstallResult.app_managed_folder}</code>
+                <span>External runtime cleanup, if needed:</span>
+                <div className="command-list compact">
+                  {uninstallResult.external_cleanup_commands.map((command) => (
+                    <code key={command}>{command}</code>
+                  ))}
+                </div>
+              </div>
+            </Panel>
+          ) : null}
+
           <Panel title="Model Listing">
-            <table className="data-table provider-model-table">
-              <thead>
-                <tr>
-                  <th>Model</th>
-                  <th>Format</th>
-                  <th>Size</th>
-                  <th>Installed</th>
-                  <th>Memory / Disk</th>
-                </tr>
-              </thead>
-              <tbody>
-                {models.map((model) => (
-                  <tr
-                    className={selectedModelId === model.id ? "selected-row" : ""}
-                    key={model.id}
-                    onClick={() => setSelectedModelId(model.id)}
-                  >
-                    <td>{model.display_name}</td>
-                    <td>{model.format}</td>
-                    <td>{formatBytesGb(model.size_bytes)}</td>
-                    <td>{model.installed ? "Yes" : "No"}</td>
-                    <td>
-                      <div className="table-action-row">
-                        <button
-                          className="secondary-button table-action"
-                          disabled={
-                            !selectedStatus.running ||
-                            !selectedStatus.definition.capabilities.includes("UnloadModel")
-                          }
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleUnloadModel(model);
-                          }}
-                          type="button"
-                        >
-                          Unload RAM
-                        </button>
-                        <button
-                          className="ghost-button table-action danger-action"
-                          disabled={
-                            !selectedStatus.running ||
-                            !model.installed ||
-                            !selectedStatus.definition.capabilities.includes("RemoveModelWeights")
-                          }
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleRemoveModelWeights(model);
-                          }}
-                          type="button"
-                        >
-                          Remove weights
-                        </button>
-                      </div>
-                    </td>
+            {models.length > 0 ? (
+              <table className="data-table provider-model-table">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Format</th>
+                    <th>Size</th>
+                    <th>Installed</th>
+                    <th>Memory / Disk</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {models.map((model) => {
+                    const unloadDisabledReason = modelUnloadDisabledReason(selectedStatus, model);
+                    const removeDisabledReason = modelWeightDisabledReason(selectedStatus, model);
+                    const actionNote = removeDisabledReason ?? unloadDisabledReason;
+                    return (
+                      <tr
+                        className={selectedModelId === model.id ? "selected-row" : ""}
+                        key={model.id}
+                        onClick={() => setSelectedModelId(model.id)}
+                      >
+                        <td>{model.display_name}</td>
+                        <td>{model.format}</td>
+                        <td>{formatBytesGb(model.size_bytes)}</td>
+                        <td>{model.installed ? "Yes" : "No"}</td>
+                        <td>
+                          <div className="table-action-row">
+                            <button
+                              className="secondary-button table-action"
+                              disabled={!!unloadDisabledReason}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleUnloadModel(model);
+                              }}
+                              type="button"
+                            >
+                              Unload RAM
+                            </button>
+                            <button
+                              className="ghost-button table-action danger-action"
+                              disabled={!!removeDisabledReason}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleRemoveModelWeights(model);
+                              }}
+                              type="button"
+                            >
+                              Remove weights
+                            </button>
+                            {actionNote ? (
+                              <span className="table-action-note">{actionNote}</span>
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <div className="empty-log-state compact provider-model-empty">
+                <strong>No provider models listed.</strong>
+                <span>Start or refresh this provider to list installed models and remove weights.</span>
+              </div>
+            )}
             <p className="fine-print">
               Unload RAM frees memory while keeping weights installed. Remove weights frees disk space
               and requires downloading the model again before reuse.
@@ -4515,6 +4580,22 @@ function upsertProviderStatus(statuses: ProviderStatus[], nextStatus: ProviderSt
   return statuses.map((status) =>
     status.definition.id === nextStatus.definition.id ? nextStatus : status
   );
+}
+
+function modelUnloadDisabledReason(status: ProviderStatus, model: ProviderModel): string | null {
+  if (!status.running) return "Start provider first.";
+  if (!status.definition.capabilities.includes("UnloadModel")) return "Unload is not supported.";
+  if (!model.installed) return "Model is not installed.";
+  return null;
+}
+
+function modelWeightDisabledReason(status: ProviderStatus, model: ProviderModel): string | null {
+  if (!status.running) return "Start provider first.";
+  if (!model.installed) return "Model is not installed.";
+  if (!status.definition.capabilities.includes("RemoveModelWeights")) {
+    return "Weight removal is Ollama-only in this version.";
+  }
+  return null;
 }
 
 function mergeModelOptions(

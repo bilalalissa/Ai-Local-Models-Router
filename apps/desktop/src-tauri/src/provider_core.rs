@@ -2,8 +2,10 @@ use crate::model_catalog::ProviderKind;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    env, fs,
     io::{Read, Write},
     net::{TcpStream, ToSocketAddrs},
+    path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -31,6 +33,7 @@ pub enum ProviderCapability {
     StartStop,
     InstallModel,
     UninstallModel,
+    UninstallProvider,
     UnloadModel,
     RemoveModelWeights,
     PauseResumeTasks,
@@ -143,6 +146,17 @@ pub struct ProviderMemoryActionResult {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderUninstallResult {
+    pub provider_id: String,
+    pub status: ProviderStatus,
+    pub app_managed_folder: String,
+    pub app_managed_folder_removed: bool,
+    pub external_runtime_removed: bool,
+    pub external_cleanup_commands: Vec<String>,
+    pub message: String,
+}
+
 pub trait ProviderAdapter {
     fn definition(&self) -> ProviderDefinition;
     fn health(&mut self) -> ProviderStatus;
@@ -157,6 +171,7 @@ pub trait ProviderAdapter {
     fn settings(&self) -> ProviderSettings;
     fn update_settings(&mut self, patch: ProviderSettingsPatch) -> ProviderStatus;
     fn install_plan(&self) -> ProviderInstallPlan;
+    fn uninstall_provider(&mut self) -> Result<ProviderUninstallResult, String>;
     fn select_model(&mut self, requested_model_id: &str) -> Result<ProviderStatus, String>;
     fn unload_model(&mut self, model_id: &str) -> Result<ProviderMemoryActionResult, String>;
     fn remove_model_weights(
@@ -346,6 +361,14 @@ impl ProviderManager {
             .map(ProviderInstance::install_plan)
     }
 
+    pub fn uninstall_provider(
+        &mut self,
+        provider_id: &str,
+    ) -> Result<ProviderUninstallResult, String> {
+        self.provider_mut(provider_id)
+            .and_then(ProviderInstance::uninstall_provider)
+    }
+
     fn provider(&self, provider_id: &str) -> Result<&ProviderInstance, String> {
         self.providers
             .iter()
@@ -442,6 +465,12 @@ impl ProviderAdapter for ProviderInstance {
     fn install_plan(&self) -> ProviderInstallPlan {
         match self {
             Self::LocalHttp(provider) => provider.install_plan(),
+        }
+    }
+
+    fn uninstall_provider(&mut self) -> Result<ProviderUninstallResult, String> {
+        match self {
+            Self::LocalHttp(provider) => provider.uninstall_provider(),
         }
     }
 
@@ -885,6 +914,49 @@ impl ProviderAdapter for LocalHttpProvider {
         install_plan_for(&self.definition, &self.settings)
     }
 
+    fn uninstall_provider(&mut self) -> Result<ProviderUninstallResult, String> {
+        self.settings.enabled = false;
+        self.paused = false;
+        self.last_running = false;
+        self.last_latency_ms = None;
+        self.last_health = ProviderHealth::Stopped;
+        self.last_models.clear();
+
+        let folder = expanded_provider_folder(&self.settings.folder);
+        let folder_display = folder.to_string_lossy().to_string();
+        let mut removed = false;
+        let cleanup_note = if is_app_managed_provider_folder(&folder) {
+            if folder.is_dir() {
+                fs::remove_dir_all(&folder)
+                    .map_err(|err| format!("failed to remove provider folder: {err}"))?;
+                removed = true;
+                format!("Removed app-managed provider folder: {folder_display}")
+            } else {
+                format!("No app-managed provider folder exists at: {folder_display}")
+            }
+        } else {
+            format!(
+                "Provider folder was not removed because it is outside the Local AI Router app-managed providers area: {folder_display}"
+            )
+        };
+
+        let commands = external_runtime_cleanup_commands(&self.definition.kind);
+        let message = "Provider adapter uninstalled from Local AI Router. Runtime software was not removed automatically.";
+        self.push_log("warn", message);
+        self.push_log("info", &cleanup_note);
+        let status = self.status(message);
+
+        Ok(ProviderUninstallResult {
+            provider_id: self.definition.id.clone(),
+            status,
+            app_managed_folder: folder_display,
+            app_managed_folder_removed: removed,
+            external_runtime_removed: false,
+            external_cleanup_commands: commands,
+            message: format!("{message} {cleanup_note}"),
+        })
+    }
+
     fn select_model(&mut self, requested_model_id: &str) -> Result<ProviderStatus, String> {
         if !self.settings.enabled {
             self.settings.enabled = true;
@@ -1036,6 +1108,7 @@ fn local_provider(
         ProviderCapability::StreamingChat,
         ProviderCapability::StartStop,
         ProviderCapability::InstallModel,
+        ProviderCapability::UninstallProvider,
         ProviderCapability::PauseResumeTasks,
         ProviderCapability::Logs,
         ProviderCapability::ProviderFolder,
@@ -1186,6 +1259,69 @@ fn install_plan_for(
         commands,
         notes,
     }
+}
+
+fn external_runtime_cleanup_commands(kind: &ProviderKind) -> Vec<String> {
+    match kind {
+        ProviderKind::Ollama => vec![
+            "Use Local AI Router > Providers > Model Listing > Remove weights for downloaded models."
+                .to_string(),
+            "brew uninstall ollama".to_string(),
+        ],
+        ProviderKind::LmStudio => vec![
+            "Quit LM Studio.".to_string(),
+            "Remove LM Studio from /Applications manually if it is no longer needed.".to_string(),
+        ],
+        ProviderKind::MlxLm => vec![
+            "Stop the MLX-LM server process.".to_string(),
+            "Remove the Python virtual environment you created for mlx-lm.".to_string(),
+        ],
+        ProviderKind::LlamaCpp => vec![
+            "Stop llama-server.".to_string(),
+            "brew uninstall llama.cpp".to_string(),
+        ],
+        ProviderKind::OpenAiCompatible => vec![
+            "Stop the custom OpenAI-compatible server outside Local AI Router.".to_string(),
+            "Remove its runtime files using that server's own uninstall instructions.".to_string(),
+        ],
+    }
+}
+
+fn expanded_provider_folder(folder: &str) -> PathBuf {
+    if let Some(rest) = folder.strip_prefix("~/") {
+        if let Some(home) = home_dir() {
+            return home.join(rest);
+        }
+    }
+    PathBuf::from(folder)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn is_app_managed_provider_folder(path: &Path) -> bool {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return false;
+    }
+
+    let components = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => value.to_str().map(str::to_string),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    components.windows(3).any(|window| {
+        window[0] == "Local AI Router" && window[1] == "providers" && !window[2].is_empty()
+    })
 }
 
 fn parse_ollama_models(body: &str) -> Result<Vec<ProviderModel>, String> {
@@ -1458,6 +1594,10 @@ mod tests {
         let statuses = manager.statuses();
 
         assert_eq!(statuses.len(), 5);
+        assert!(statuses.iter().all(|status| status
+            .definition
+            .capabilities
+            .contains(&ProviderCapability::UninstallProvider)));
         assert!(statuses
             .iter()
             .any(|status| status.definition.kind == ProviderKind::Ollama));
@@ -1515,6 +1655,76 @@ mod tests {
 
         assert!(unload_error.contains("not supported"));
         assert!(remove_error.contains("not supported"));
+    }
+
+    #[test]
+    fn uninstall_provider_disables_adapter_without_runtime_removal() {
+        let mut manager = ProviderManager::seeded();
+
+        let result = manager
+            .uninstall_provider("lm-studio-local")
+            .expect("uninstall should succeed");
+
+        assert_eq!(result.status.health, ProviderHealth::Stopped);
+        assert!(!result.status.running);
+        assert!(!result.status.paused);
+        assert_eq!(result.status.model_count, 0);
+        assert!(!result.external_runtime_removed);
+        assert!(!result.external_cleanup_commands.is_empty());
+    }
+
+    #[test]
+    fn uninstall_removes_only_app_managed_provider_folder() {
+        let mut manager = ProviderManager::seeded();
+        let folder = env::temp_dir()
+            .join(format!("lar_provider_uninstall_test_{}", now_ms()))
+            .join("Local AI Router")
+            .join("providers")
+            .join("ollama");
+        fs::create_dir_all(&folder).expect("test provider folder is created");
+        fs::write(folder.join("state.json"), "{}").expect("test provider file is created");
+        manager
+            .update_settings(ProviderSettingsPatch {
+                provider_id: "ollama-local".to_string(),
+                enabled: false,
+                base_url: "http://127.0.0.1:9".to_string(),
+                folder: folder.to_string_lossy().to_string(),
+                launch_command: None,
+            })
+            .expect("settings update succeeds");
+
+        let result = manager
+            .uninstall_provider("ollama-local")
+            .expect("uninstall should remove app-managed folder");
+
+        assert!(result.app_managed_folder_removed);
+        assert!(!folder.exists());
+    }
+
+    #[test]
+    fn uninstall_refuses_to_delete_unmanaged_provider_folder() {
+        let mut manager = ProviderManager::seeded();
+        let folder = env::temp_dir()
+            .join(format!("lar_provider_unmanaged_test_{}", now_ms()))
+            .join("ollama");
+        fs::create_dir_all(&folder).expect("test unmanaged folder is created");
+        manager
+            .update_settings(ProviderSettingsPatch {
+                provider_id: "ollama-local".to_string(),
+                enabled: false,
+                base_url: "http://127.0.0.1:9".to_string(),
+                folder: folder.to_string_lossy().to_string(),
+                launch_command: None,
+            })
+            .expect("settings update succeeds");
+
+        let result = manager
+            .uninstall_provider("ollama-local")
+            .expect("uninstall should skip unmanaged folder");
+
+        assert!(!result.app_managed_folder_removed);
+        assert!(folder.exists());
+        let _ = fs::remove_dir_all(folder);
     }
 
     #[test]

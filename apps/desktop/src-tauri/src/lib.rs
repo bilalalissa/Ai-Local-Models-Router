@@ -30,7 +30,7 @@ use model_catalog::{
 use provider_core::{
     ProviderChatRequest, ProviderChatResponse, ProviderInstallPlan, ProviderLogEntry,
     ProviderManager, ProviderMemoryActionResult, ProviderModel, ProviderSettings,
-    ProviderSettingsPatch, ProviderStatus,
+    ProviderSettingsPatch, ProviderStatus, ProviderUninstallResult,
 };
 use remote_broker_core::{
     remote_broker_file_path, BrokerEndpointData, BrokerEndpointRequest, BrokerEndpointResponse,
@@ -671,6 +671,22 @@ fn preview_provider_install_plan(
 }
 
 #[tauri::command]
+fn uninstall_provider(
+    app: tauri::AppHandle,
+    provider_state: State<'_, SharedProviderState>,
+    provider_id: String,
+) -> Result<ProviderUninstallResult, String> {
+    let mut providers = provider_state
+        .lock()
+        .map_err(|_| "provider state lock poisoned".to_string())?;
+    let result = providers.uninstall_provider(&provider_id)?;
+    emit_provider_status(&app, &result.status);
+    let logs = providers.logs(Some(&provider_id));
+    let _ = app.emit("log-appended", logs.first());
+    Ok(result)
+}
+
+#[tauri::command]
 fn unload_provider_model(
     app: tauri::AppHandle,
     provider_state: State<'_, SharedProviderState>,
@@ -1066,6 +1082,7 @@ pub fn run() {
             get_provider_settings,
             update_provider_settings,
             preview_provider_install_plan,
+            uninstall_provider,
             unload_provider_model,
             remove_provider_model_weights,
             get_background_snapshot,

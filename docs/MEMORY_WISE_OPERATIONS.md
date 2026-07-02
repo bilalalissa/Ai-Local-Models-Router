@@ -34,6 +34,12 @@ selected provider.
 - **Remove weights** removes the selected model weights from disk after a
   confirmation prompt. This frees storage and requires downloading the model
   again before reuse.
+- Disabled action text explains the common blockers: start the provider first,
+  install/list models, or use Ollama for provider-native weight removal.
+- **Uninstall provider** appears in **Providers > Provider Status**. It disables
+  the Local AI Router adapter and removes only app-managed provider files. It
+  does not remove Homebrew packages, LM Studio, Python environments, or other
+  runtime software automatically.
 
 These actions are provider-native. In this stage, Local AI Router supports both
 actions for Ollama. Other OpenAI-compatible providers may need their own UI or
@@ -86,7 +92,9 @@ from memory:
 - **Unload from memory** frees RAM now but keeps the model installed.
 - **Remove weights from disk** frees storage and requires re-download before the
   model can be used again.
-- **Uninstall the provider** removes the runtime application itself.
+- **Uninstall the provider** disables Local AI Router's adapter and cleans only
+  app-managed provider files. Runtime applications must be removed separately
+  using their own uninstall process.
 
 For Ollama, list installed models first:
 
@@ -129,6 +137,24 @@ every external app has stopped using the same provider model.
 Use this option for large models you rarely need, old versions, duplicate
 quantizations, or models that should run on the remote broker instead of the
 local Mac.
+
+## Uninstall Provider Safely
+
+Use **Providers > Provider Status > Uninstall provider** when you want Local AI
+Router to stop using a provider adapter.
+
+The in-app uninstall:
+
+1. Disables the selected provider adapter.
+2. Stops Local AI Router provider tasks for that adapter.
+3. Clears the adapter's current model/runtime state.
+4. Removes the provider folder only when it is inside Local AI Router's
+   app-managed providers area.
+5. Shows follow-up commands or manual steps for removing the external runtime.
+
+The in-app uninstall does not remove system software. For example, Ollama still
+requires `brew uninstall ollama` or another provider-native uninstall method if
+you want to remove the runtime itself.
 
 ## Local AI Router Settings To Prefer
 

@@ -11,6 +11,7 @@ export type ProviderCapability =
   | "StartStop"
   | "InstallModel"
   | "UninstallModel"
+  | "UninstallProvider"
   | "UnloadModel"
   | "RemoveModelWeights"
   | "PauseResumeTasks"
@@ -105,6 +106,16 @@ export type ProviderMemoryActionResult = {
   freed_memory: boolean;
   freed_disk: boolean;
   requires_redownload: boolean;
+  message: string;
+};
+
+export type ProviderUninstallResult = {
+  provider_id: string;
+  status: ProviderStatus;
+  app_managed_folder: string;
+  app_managed_folder_removed: boolean;
+  external_runtime_removed: boolean;
+  external_cleanup_commands: string[];
   message: string;
 };
 
@@ -348,6 +359,13 @@ export async function previewProviderInstallPlan(providerId: string): Promise<Pr
   return installPlanFor(providerById(providerId));
 }
 
+export async function uninstallProvider(providerId: string): Promise<ProviderUninstallResult> {
+  if (isTauriRuntime()) {
+    return invoke<ProviderUninstallResult>("uninstall_provider", { providerId });
+  }
+  return uninstallFallbackProvider(providerId);
+}
+
 export async function unloadProviderModel(providerId: string, modelId: string): Promise<ProviderMemoryActionResult> {
   if (isTauriRuntime()) {
     return invoke<ProviderMemoryActionResult>("unload_provider_model", { providerId, modelId });
@@ -382,6 +400,40 @@ function updateProvider(providerId: string, update: (provider: FallbackProvider)
   const status = statusFromFallback(providers[index]);
   emitProviderStatus(status);
   return status;
+}
+
+function uninstallFallbackProvider(providerId: string): ProviderUninstallResult {
+  let folder = "";
+  const status = updateProvider(providerId, (provider) => {
+    folder = provider.settings.folder;
+    return {
+      ...provider,
+      settings: { ...provider.settings, enabled: false },
+      running: false,
+      paused: false,
+      health: "Stopped",
+      latency_ms: null,
+      models: [],
+      logs: [
+        logEntry(
+          providerId,
+          "warn",
+          "Provider adapter uninstalled from Local AI Router. Runtime software was not removed automatically."
+        ),
+        ...provider.logs
+      ]
+    };
+  });
+  return {
+    provider_id: providerId,
+    status,
+    app_managed_folder: folder,
+    app_managed_folder_removed: false,
+    external_runtime_removed: false,
+    external_cleanup_commands: externalCleanupCommands(status.definition.kind),
+    message:
+      "Provider adapter uninstalled from Local AI Router. Runtime software was not removed automatically."
+  };
 }
 
 function updateProviderModelMemory(
@@ -500,6 +552,7 @@ function providerSeed(
       "StreamingChat",
       "StartStop",
       "InstallModel",
+      "UninstallProvider",
       ...(kind === "Ollama" ? (["UnloadModel", "RemoveModelWeights"] as ProviderCapability[]) : []),
       "PauseResumeTasks",
       "Logs",
@@ -541,6 +594,29 @@ function providerModel(
     installed: true,
     supports_chat: supportsChat
   };
+}
+
+function externalCleanupCommands(kind: ProviderKind): string[] {
+  const commands: Record<ProviderKind, string[]> = {
+    Ollama: [
+      "Use Providers > Model Listing > Remove weights for downloaded models.",
+      "brew uninstall ollama"
+    ],
+    LmStudio: [
+      "Quit LM Studio.",
+      "Remove LM Studio from /Applications manually if it is no longer needed."
+    ],
+    MlxLm: [
+      "Stop the MLX-LM server process.",
+      "Remove the Python virtual environment you created for mlx-lm."
+    ],
+    LlamaCpp: ["Stop llama-server.", "brew uninstall llama.cpp"],
+    OpenAiCompatible: [
+      "Stop the custom OpenAI-compatible server outside Local AI Router.",
+      "Remove its runtime files using that server's own uninstall instructions."
+    ]
+  };
+  return commands[kind];
 }
 
 function installPlanFor(provider: FallbackProvider): ProviderInstallPlan {

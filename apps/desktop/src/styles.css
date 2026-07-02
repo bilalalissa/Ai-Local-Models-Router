@@ -1354,8 +1354,30 @@ button:disabled {
 }
 
 .provider-chat-panel,
-.provider-plan-panel {
+.provider-plan-panel,
+.provider-uninstall-panel {
   grid-column: 1 / -1;
+}
+
+.uninstall-result {
+  display: grid;
+  gap: 10px;
+}
+
+.uninstall-result span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.uninstall-result > code {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #f8fafc;
+  color: #182235;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .provider-chat-form {
@@ -1444,6 +1466,10 @@ button:disabled {
 .command-list {
   display: grid;
   gap: 8px;
+}
+
+.command-list.compact {
+  gap: 6px;
 }
 
 .command-list code {
@@ -1647,6 +1673,17 @@ button:disabled {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.table-action-note {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: normal;
+}
+
+.provider-model-empty {
+  min-height: 120px;
 }
 
 .json-preview {

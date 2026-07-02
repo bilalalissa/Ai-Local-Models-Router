@@ -53,7 +53,7 @@ Expected result: the model table explains why each model fits or does not fit.
 | --- | --- |
 | 1 | Provider cards show health, model counts, and pause state. |
 | 2 | Provider settings hold the local base URL and enablement state. |
-| 3 | Model listing and test chat verify provider connectivity. |
+| 3 | Model listing, weight cleanup, and test chat verify provider connectivity. |
 | 4 | Provider logs show recent checks and actions. |
 
 1. Install and start a provider outside the app, or use **Models** >
@@ -62,6 +62,8 @@ Expected result: the model table explains why each model fits or does not fit.
 3. Refresh health.
 4. Update base URLs if your provider does not use the default local port.
 5. Run a small test chat from the provider panel.
+6. Use **Remove weights** in the model listing for Ollama model cleanup, or use
+   **Uninstall provider** in Provider Status to disable an adapter safely.
 
 Expected result: a healthy provider lists models and can answer a tiny test
 prompt. If a provider is stopped, start it outside the app or use the provider
