@@ -193,6 +193,20 @@ type EmptyPage = {
   readiness: string[];
 };
 
+type PendingProviderAction =
+  | {
+      kind: "uninstall-provider";
+      providerId: string;
+      providerName: string;
+    }
+  | {
+      kind: "remove-model-weights";
+      providerId: string;
+      providerName: string;
+      modelId: string;
+      modelName: string;
+    };
+
 type PauseAction = {
   label: string;
   duration: PauseDuration;
@@ -1277,6 +1291,8 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
   const [settingsDraft, setSettingsDraft] = useState<ProviderSettings | null>(null);
   const [installPlan, setInstallPlan] = useState<ProviderInstallPlan | null>(null);
   const [uninstallResult, setUninstallResult] = useState<ProviderUninstallResult | null>(null);
+  const [pendingProviderAction, setPendingProviderAction] = useState<PendingProviderAction | null>(null);
+  const [providerActionNotice, setProviderActionNotice] = useState<string | null>(null);
   const [folder, setFolder] = useState("");
   const [prompt, setPrompt] = useState("Say ready from the local provider.");
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
@@ -1334,6 +1350,8 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
         setSettingsDraft(nextSettings);
         setInstallPlan(null);
         setUninstallResult(null);
+        setPendingProviderAction(null);
+        setProviderActionNotice(null);
         setSelectedModelId((current) => current ?? nextModels[0]?.id ?? null);
       })
       .catch((err) => {
@@ -1373,6 +1391,8 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
   const handleRefresh = useCallback(async () => {
     setError(null);
     setUninstallResult(null);
+    setPendingProviderAction(null);
+    setProviderActionNotice(null);
     const nextStatuses = await refreshProviderHealth();
     setStatuses(nextStatuses);
     setStatusMessage("Provider health checks refreshed.");
@@ -1423,6 +1443,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
     setError(null);
     setInstallPlan(null);
     setUninstallResult(null);
+    setPendingProviderAction(null);
     try {
       const nextStatus = await updateProviderSettings({
         provider_id: settingsDraft.provider_id,
@@ -1447,6 +1468,7 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
     if (!selectedStatus) return;
     setError(null);
     setUninstallResult(null);
+    setPendingProviderAction(null);
     try {
       const plan = await previewProviderInstallPlan(selectedStatus.definition.id);
       setInstallPlan(plan);
@@ -1459,25 +1481,16 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
 
   const handleUninstallProvider = useCallback(async () => {
     if (!selectedStatus) return;
-    const approved = window.confirm(
-      `Uninstall ${selectedStatus.definition.name} from Local AI Router?\n\nThis disables the adapter and removes only Local AI Router app-managed provider files. It will not uninstall the runtime app from macOS or Windows.`
-    );
-    if (!approved) return;
     setError(null);
     setInstallPlan(null);
-    try {
-      const result = await uninstallProvider(selectedStatus.definition.id);
-      updateOneStatus(result.status);
-      setModels([]);
-      setSelectedModelId(null);
-      setUninstallResult(result);
-      setLogs(await getProviderLogs(selectedStatus.definition.id));
-      setStatusMessage(result.message);
-    } catch (err) {
-      setError(errorMessage(err));
-      setStatusMessage("Provider uninstall failed.");
-    }
-  }, [selectedStatus, updateOneStatus]);
+    setProviderActionNotice(null);
+    setPendingProviderAction({
+      kind: "uninstall-provider",
+      providerId: selectedStatus.definition.id,
+      providerName: selectedStatus.definition.name
+    });
+    setStatusMessage("Confirm provider uninstall.");
+  }, [selectedStatus]);
 
   const refreshSelectedProviderDetails = useCallback(
     async (providerId: string) => {
@@ -1516,23 +1529,56 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
   const handleRemoveModelWeights = useCallback(
     async (model: ProviderModel) => {
       if (!selectedStatus) return;
-      const approved = window.confirm(
-        `Remove ${model.display_name} from disk?\n\nThis frees storage but the model must be downloaded again before reuse.`
-      );
-      if (!approved) return;
       setError(null);
-      try {
-        const result = await removeProviderModelWeights(selectedStatus.definition.id, model.id);
-        updateOneStatus(result.status);
-        await refreshSelectedProviderDetails(selectedStatus.definition.id);
-        setStatusMessage(result.message);
-      } catch (err) {
-        setError(errorMessage(err));
-        setStatusMessage("Model weight removal failed.");
-      }
+      setProviderActionNotice(null);
+      setPendingProviderAction({
+        kind: "remove-model-weights",
+        providerId: selectedStatus.definition.id,
+        providerName: selectedStatus.definition.name,
+        modelId: model.id,
+        modelName: model.display_name
+      });
+      setStatusMessage("Confirm model weight removal.");
     },
-    [refreshSelectedProviderDetails, selectedStatus, updateOneStatus]
+    [selectedStatus]
   );
+
+  const executePendingProviderAction = useCallback(async () => {
+    if (!pendingProviderAction) return;
+    const action = pendingProviderAction;
+    setPendingProviderAction(null);
+    setError(null);
+    setProviderActionNotice(null);
+    try {
+      if (action.kind === "uninstall-provider") {
+        setInstallPlan(null);
+        const result = await uninstallProvider(action.providerId);
+        updateOneStatus(result.status);
+        setModels([]);
+        setSelectedModelId(null);
+        setUninstallResult(result);
+        setLogs(await getProviderLogs(action.providerId));
+        setProviderActionNotice(result.message);
+        setStatusMessage(result.message);
+        return;
+      }
+
+      const result = await removeProviderModelWeights(action.providerId, action.modelId);
+      updateOneStatus(result.status);
+      await refreshSelectedProviderDetails(action.providerId);
+      setProviderActionNotice(result.message);
+      setStatusMessage(result.message);
+    } catch (err) {
+      const message = errorMessage(err);
+      setError(message);
+      setProviderActionNotice(message);
+      setStatusMessage(
+        action.kind === "uninstall-provider"
+          ? "Provider uninstall failed."
+          : "Model weight removal failed."
+      );
+    }
+  }, [pendingProviderAction, refreshSelectedProviderDetails, updateOneStatus]);
 
   if (statuses.length === 0) {
     return (
@@ -1711,6 +1757,54 @@ function ProvidersPage({ appState }: { appState: AppStateSnapshot }) {
               <p className="fine-print">Select a provider to edit local endpoint settings.</p>
             )}
           </Panel>
+
+          {pendingProviderAction ? (
+            <Panel title="Confirm Provider Action" className="provider-confirm-panel">
+              <div className="provider-confirmation">
+                <div className="provider-confirm-copy">
+                  <strong>
+                    {pendingProviderAction.kind === "uninstall-provider"
+                      ? `Uninstall ${pendingProviderAction.providerName} from Local AI Router?`
+                      : `Remove ${pendingProviderAction.modelName} weights from disk?`}
+                  </strong>
+                  <span>
+                    {pendingProviderAction.kind === "uninstall-provider"
+                      ? "This disables the adapter and removes only Local AI Router app-managed provider files. Runtime apps are not uninstalled automatically."
+                      : "This frees storage but the model must be downloaded again before reuse."}
+                  </span>
+                </div>
+                <div className="provider-confirm-actions">
+                  <button
+                    className="secondary-button"
+                    onClick={() => {
+                      setPendingProviderAction(null);
+                      setProviderActionNotice("Action cancelled.");
+                      setStatusMessage("Provider action cancelled.");
+                    }}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="ghost-button danger-action"
+                    onClick={executePendingProviderAction}
+                    type="button"
+                  >
+                    <Trash2 size={16} />
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            </Panel>
+          ) : null}
+
+          {providerActionNotice && !pendingProviderAction ? (
+            <Panel title="Action Status" className="provider-confirm-panel">
+              <div className={error ? "action-status error" : "action-status"}>
+                {providerActionNotice}
+              </div>
+            </Panel>
+          ) : null}
 
           {uninstallResult ? (
             <Panel title="Uninstall Result" className="provider-uninstall-panel">

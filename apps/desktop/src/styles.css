@@ -1348,8 +1348,48 @@ button:disabled {
 .provider-model-panel,
 .provider-chat-panel,
 .provider-plan-panel,
+.provider-confirm-panel,
 .provider-uninstall-panel {
   grid-column: 1 / -1;
+}
+
+.provider-confirmation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.provider-confirm-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.provider-confirm-copy span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.provider-confirm-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.action-status {
+  border: 1px solid #b7dfc1;
+  border-radius: 7px;
+  padding: 10px 12px;
+  background: #effaf2;
+  color: #1f6f38;
+  font-weight: 700;
+}
+
+.action-status.error {
+  border-color: #f0b7ad;
+  background: #fff0ed;
+  color: #b93725;
 }
 
 .provider-model-table {
@@ -2190,8 +2230,14 @@ button:disabled {
   .hardware-export-panel,
   .provider-model-panel,
   .provider-chat-panel,
+  .provider-confirm-panel,
   .settings-wide {
     grid-column: auto;
+  }
+
+  .provider-confirmation {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .provider-log-row {
